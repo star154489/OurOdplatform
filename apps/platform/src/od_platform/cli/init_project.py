@@ -14,7 +14,7 @@ logger = get_logger(
 )
 
 
-@log_execution(logger=logger)
+@log_execution(logger=logger,repeat=4)
 def initialize_project() -> None:
     """初始化项目，创建所有必需的目录结构"""
     logger.info("开始初始化项目核心目录".center(LINE_WIDTH, '='))
