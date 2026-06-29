@@ -1,10 +1,16 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 from pathlib import Path
 from typing import List, Tuple
 
 # 找到Workspace根目录
 WORKSPACE_MARKER: str = ".odp-workspace"
 
-def _find_workspace_root(start: Path, markers: Tuple[str, ...] = (WORKSPACE_MARKER,)) -> Path:
+
+def _find_workspace_root(
+    start: Path,
+    markers: Tuple[str, ...] = (WORKSPACE_MARKER,),
+) -> Path:
     current = start.resolve()
     if current.is_file():
         current = current.parent
@@ -13,69 +19,31 @@ def _find_workspace_root(start: Path, markers: Tuple[str, ...] = (WORKSPACE_MARK
             if (parent / marker).exists():
                 return parent
     raise FileNotFoundError(
-        f"找不到workspace marker文件({markers})，"
+        f"找不到workspace marker文件({markers}) "
         f"请确认仓库根目录已存在{WORKSPACE_MARKER}文件"
     )
+
 
 # 计算ROOT_DIR位置
 ROOT_DIR: Path = _find_workspace_root(Path(__file__))
 
-# 端的根目录
-APP_DIR: Path = ROOT_DIR / "apps" / "platform"
+# 日志目录
+LOGGING_DIR: Path = ROOT_DIR / "apps" / "platform" / "logging"
 
-# 共享资产
-DATA_DIR: Path = ROOT_DIR / "data"
-MODELS_DIR: Path = ROOT_DIR / "models"
-RUNS_DIR: Path = ROOT_DIR / "runs"
 
-# 模型的子目录
-PRETRAINED_MODELS_DIR: Path = MODELS_DIR / "pretrained"   # 预训练模型
-TRAINED_MODELS_DIR: Path = MODELS_DIR / "trained"         # 训练好的模型
-
-# 数据集的子目录
-RAW_DATA_DIR: Path = DATA_DIR / "raw"                     # 用户原始数据
-PROCESSED_DATA_DIR: Path = DATA_DIR / "processed"         # 处理后数据
-
-# 端私有资产
-CONFIGS_DIR: Path = APP_DIR / "configs"
-LOGGING_DIR: Path = APP_DIR / "logging"
-UNIT_TEST_DIR: Path = APP_DIR / "tests"
-
-# 顶层的文档目录
-DOCS_DIR: Path = ROOT_DIR / "docs"
-
-# 工程基础设置目录（共享）
-SCRIPTS_DIR: Path = ROOT_DIR / "scripts"
-
-# 对外暴露的要初始化的目录列表
 def get_dirs_to_initialize() -> List[Path]:
+    """返回需要初始化的所有目录"""
     return [
-        DATA_DIR,
-        MODELS_DIR,
-        RUNS_DIR,
-        PRETRAINED_MODELS_DIR,
-        TRAINED_MODELS_DIR,
-        RAW_DATA_DIR,
-        PROCESSED_DATA_DIR,
-        CONFIGS_DIR,
-        LOGGING_DIR,
-        UNIT_TEST_DIR,
-        DOCS_DIR,
-        SCRIPTS_DIR,
+        ROOT_DIR / "data",
+        ROOT_DIR / "data" / "raw",
+        ROOT_DIR / "data" / "processed",
+        ROOT_DIR / "models",
+        ROOT_DIR / "models" / "pretrained",
+        ROOT_DIR / "models" / "trained",
+        ROOT_DIR / "runs",
+        ROOT_DIR / "apps" / "platform" / "configs",
+        ROOT_DIR / "apps" / "platform" / "logging",
+        ROOT_DIR / "apps" / "platform" / "tests",
+        ROOT_DIR / "docs",
+        ROOT_DIR / "scripts",
     ]
-
-if __name__ == "__main__":
-    print(f"ROOT DIR (workspace) = {ROOT_DIR}")
-    print(f"APP DIR = {APP_DIR}")
-    print(f"DATA DIR = {DATA_DIR}")
-    print(f"MODELS DIR = {MODELS_DIR}")
-    print(f"RUNS DIR = {RUNS_DIR}")
-    print(f"PRETRAINED MODELS DIR = {PRETRAINED_MODELS_DIR}")
-    print(f"TRAINED MODELS DIR = {TRAINED_MODELS_DIR}")
-    print(f"RAW DATA DIR = {RAW_DATA_DIR}")
-    print(f"PROCESSED DATA DIR = {PROCESSED_DATA_DIR}")
-    print(f"CONFIGS DIR = {CONFIGS_DIR}")
-    print(f"LOGGING DIR = {LOGGING_DIR}")
-    print(f"UNIT TEST DIR = {UNIT_TEST_DIR}")
-    for d in get_dirs_to_initialize():
-        print(f"将要初始化的目录有: {d.relative_to(ROOT_DIR)}")
