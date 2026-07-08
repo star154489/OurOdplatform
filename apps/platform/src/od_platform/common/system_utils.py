@@ -12,36 +12,20 @@ import platform
 import time
 import logging
 from typing import Optional
-
-from sympy.crypto import padded_key
+from od_platform.common.string_utils import pad_to_width, format_size
 
 LINE_WIDTH = 60
-from od_platform.common.string_utils import pad_to_width
-
 logger = logging.getLogger(__name__)
-
-def _format_size(bytes_size) -> str:
-    """将字节大小格式化为人类可读的格式"""
-    if not bytes_size or not isinstance(bytes_size, (int, float)):
-        return "N/A"
-    if bytes_size >= 1024**3:
-        return f"{bytes_size / 1024**3:.2f} GB"
-    elif bytes_size >= 1024**2:
-        return f"{bytes_size / 1024**2:.2f} MB"
-    elif bytes_size >= 1024:
-        return f"{bytes_size / 1024:.2f} KB"
-    else:
-        return f"{bytes_size} B"
 
 def get_basic_device_info() -> dict:
     """返回结构化的环境信息字典"""
     cpu_name = platform.processor() or platform.machine() or "未知CPU"
-    cpu_cores = os.cpu_count() or "Unknow"
+    cpu_cores = os.cpu_count() or "Unknown"
     try:
         import psutil
         memory = psutil.virtual_memory()
-        total_ram = _format_size(memory.total)
-        available_ram = _format_size(memory.available)
+        total_ram = format_size(memory.total)
+        available_ram = format_size(memory.available)
         ram_usage = f"{memory.percent}%"
     except ImportError:
         total_ram = "N/A(未安装psutil)"
@@ -74,7 +58,7 @@ def get_basic_device_info() -> dict:
     if cuda_available and _torch is not None:
         for i in range(gpu_count):
             gpu_info[f"GPU {i}"] = _torch.cuda.get_device_name(i)
-            gpu_info[f"GPU {i} 显存"] = _format_size(_torch.cuda.get_device_properties(i).total_memory)
+            gpu_info[f"GPU {i} 显存"] = format_size(_torch.cuda.get_device_properties(i).total_memory)
 
     return {
         "系统信息": {
@@ -96,12 +80,12 @@ def get_basic_device_info() -> dict:
         "GPU信息":gpu_info
     }
 
-def log_device_info(target_logger: Optional[logging.Logger] = None) -> dict :
+def log_device_info(target_logger: Optional[logging.Logger] = None) -> dict:
     """把环境信息打印到logger"""
     log = target_logger if target_logger is not None else logger
     info = get_basic_device_info()
 
-    log.info("运行换进信息概览".center(LINE_WIDTH))
+    log.info("运行环境信息概览".center(LINE_WIDTH))
     log.info("=" * LINE_WIDTH)
 
     key_width = 20
