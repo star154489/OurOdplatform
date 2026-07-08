@@ -1,0 +1,18 @@
+$markerContent = @'
+# ODPlatform 工作区标记文件
+#
+# 此空文件用于标记工作区根目录。
+# paths.py 会从模块位置向上查找此文件，
+# 使路径解析不依赖目录结构变化。
+#
+# 行业标准模式（pytest、poetry、git、npm、cargo 等均采用）。
+#
+# 请勿删除此文件。
+'@
+
+# 用 .NET API 显式写无 BOM 的 UTF-8(兼容 PS 5.1 / PS 7+)
+[System.IO.File]::WriteAllText(
+    "$PWD\.odp-workspace",
+    $markerContent,
+    (New-Object System.Text.UTF8Encoding $false)
+)

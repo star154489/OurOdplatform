@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ODPlatform 工作区共享开发工具配置
+#
+# 本文件只放全仓共用的工具配置（ruff / mypy / pytest），不放业务依赖。
+# 业务依赖写在 apps/platform/pyproject.toml 等各子项目中。
+# ═══════════════════════════════════════════════════════════════════════════════
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+no_implicit_optional = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["colorlog", "psutil", "ultralytics", "torch", "pydantic"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = [
+    "apps/platform/tests",
+    "tests/",
+]
+markers = [
+    "unit: 单元测试",
+    "integration: 集成测试",
+    "slow: 慢速测试（如需要 GPU 的测试）",
+]
+
+[tool.coverage.run]
+source = ["od_platform"]
