@@ -5,17 +5,14 @@ variety of input specifiers.
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 from .core.base import FrameSource
 from .core.config import CameraConfig
 from .core.types import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
-from .sources.camera import CameraSource
-from .sources.image import ImageFolderSource, ImageSource
-from .sources.video import VideoSource
+from .registry import get_source
 from .wrappers.aio import AsyncSource
 from .wrappers.threaded import ThreadedSource
 
@@ -30,6 +27,18 @@ __all__ = [
 # Regex: detect if *source* looks like a URL (scheme://...)
 _URL_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*://")
 
+# URI scheme → source type mapping (e.g. "depth://" → "depth_camera")
+_URI_SCHEME_MAP: dict[str, str] = {}
+
+
+def register_uri_scheme(scheme: str, source_type: str) -> None:
+    """Register a URI scheme → source_type mapping for auto-detection.
+
+    Example: ``register_uri_scheme("depth", "depth_camera")`` makes
+    ``"depth://0"`` resolve to the ``"depth_camera"`` source type.
+    """
+    _URI_SCHEME_MAP[scheme] = source_type
+
 
 def _is_url(s: str) -> bool:
     return bool(_URL_PATTERN.match(s))
@@ -38,14 +47,24 @@ def _is_url(s: str) -> bool:
 def _infer_source_type(source: str) -> str:
     """Infer the source type from the *source* string.
 
-    Returns one of ``"camera"``, ``"image"``, ``"video"``,
-    ``"image_folder"``, or ``"video"`` as a fallback.
+    Returns one of the keys registered in the source registry
+    (e.g. ``"camera"``, ``"image"``, ``"video"``, ``"image_folder"``,
+    ``"depth_camera"``, ``"ir_camera"``).
     """
+    # 0) URI scheme check: e.g. "depth://0", "ir://1"
+    match = _URL_PATTERN.match(source)
+    if match:
+        scheme = match.group().rstrip("://")
+        if scheme in _URI_SCHEME_MAP:
+            return _URI_SCHEME_MAP[scheme]
+        # Standard URL (rtsp, http, etc.) → video
+        return "video"
+
     # 1) All digits → camera index
     if source.isdigit():
         return "camera"
 
-    # 2) URL → video
+    # 2) URL without special scheme → video
     if _is_url(source):
         return "video"
 
@@ -87,6 +106,7 @@ def create_frame_source(
         * Path to a video file (e.g. ``"video.mp4"``)
         * URL to a network stream (e.g. ``"rtsp://..."``)
         * Path to a directory of images
+        * Special URI scheme (e.g. ``"depth://0"``, ``"ir://1"``)
 
     config : CameraConfig or None
         Only used when *source* is a camera index.  If ``None`` a default
@@ -107,23 +127,9 @@ def create_frame_source(
     """
     source_type = _infer_source_type(source)
 
-    if source_type == "camera":
-        cfg = config or CameraConfig(camera_id=int(source))
-        # Use camera_id from config if source is the index
-        if config is None:
-            cfg = CameraConfig(camera_id=int(source))
-        else:
-            cfg = config
-        inner: FrameSource = CameraSource(cfg)
-
-    elif source_type == "image":
-        inner = ImageSource(source)
-
-    elif source_type == "image_folder":
-        inner = ImageFolderSource(source)
-
-    else:  # video
-        inner = VideoSource(source)
+    # Look up the registered factory for this source type.
+    entry = get_source(source_type)
+    inner: FrameSource = entry.factory(source, config=config)
 
     if threaded:
         # Pop threaded-specific kwargs: strategy, maxsize, warmup_frames,
@@ -186,3 +192,9 @@ def create_async_source(
     """
     inner = create_frame_source(source, config, threaded=threaded, **kwargs)
     return AsyncSource(inner)
+
+
+# ── URI scheme registrations ─────────────────────────────────────────
+# Called at import time so "depth://0" and "ir://1" auto-resolve.
+register_uri_scheme("depth", "depth_camera")
+register_uri_scheme("ir", "ir_camera")

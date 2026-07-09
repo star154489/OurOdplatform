@@ -10,6 +10,8 @@ __all__ = ["CameraConfig"]
 
 CameraBackend = Literal["auto", "msmf", "dshow", "v4l2"]
 CameraCodec = Literal["MJPG", "YUYV", "H264", "MP4V"]
+CameraType = Literal["rgb", "depth", "ir"]
+DepthUnit = Literal["mm", "m"]
 
 
 class CameraConfig(BaseModel):
@@ -36,6 +38,10 @@ class CameraConfig(BaseModel):
     codec : CameraCodec
         FourCC codec hint (e.g. ``"MJPG"`` for motion-JPEG, ``"YUYV"`` for
         raw YUV, ``"H264"`` for H.264, ``"MP4V"`` for MPEG-4).
+    camera_type : CameraType
+        Sensor type: ``"rgb"`` (default), ``"depth"``, or ``"ir"``.
+    depth_unit : DepthUnit
+        Unit for depth camera frames: ``"mm"`` (default) or ``"m"``.
     """
 
     model_config = {"extra": "forbid", "validate_assignment": True}
@@ -46,6 +52,8 @@ class CameraConfig(BaseModel):
     fps: int = Field(default=30, ge=1)
     backend: CameraBackend = Field(default="auto")
     codec: CameraCodec = Field(default="MJPG")
+    camera_type: CameraType = Field(default="rgb")
+    depth_unit: DepthUnit = Field(default="mm")
 
     # -- public helpers ---------------------------------------------------
 

@@ -16,10 +16,16 @@ from ..core.types import (
     FrameInfo,
     SourceType,
 )
+from ..registry import register_source
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["VideoSource"]
+
+
+@register_source("video", description="Video file or network stream (RTSP/HTTP)")
+def _create_video(source: str, config=None, **_kw):
+    return VideoSource(source)
 
 _FPS_FALLBACK: float = 30.0
 """Fallback framerate used when OpenCV reports 0 or missing fps."""

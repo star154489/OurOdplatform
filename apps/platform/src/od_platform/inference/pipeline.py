@@ -26,6 +26,7 @@ loop FPS 测量纪律 (见 7.9.3):
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread
@@ -38,6 +39,10 @@ from .overlay import Metrics, draw_hud, draw_pause
 from .sinks import NullSink, OutputSink
 
 logger = logging.getLogger(__name__)
+
+
+def _is_macos() -> bool:
+    return sys.platform == "darwin"
 
 _SENTINEL = object()
 
@@ -83,12 +88,14 @@ class _Controller:
 class _Reader(Thread):
     """读帧线程. 相机: 只留最新 (低延迟); 视频/图片: 有界阻塞 (全处理不丢)."""
 
-    def __init__(self, source, camera_config, *, live: bool, capacity: int, capture_fps) -> None:
+    def __init__(self, source, camera_config, *, live: bool, capacity: int,
+                 capture_fps, stride: int = 1) -> None:
         super().__init__(daemon=True)
         self._source = source
         self._camera_config = camera_config
         self._live = live
         self._capture_fps = capture_fps
+        self._stride = max(1, int(stride))
         self.q: Queue = Queue(maxsize=1 if live else capacity)
         self._stop_evt = Event()
         self.source_type = None
@@ -98,6 +105,7 @@ class _Reader(Thread):
         try:
             with create_frame_source(self._source, camera_config=self._camera_config) as src:
                 self.source_type = src.source_type
+                src.set_stride(self._stride)
                 t_prev = time.perf_counter()
                 while True:
                     if self._stop_evt.is_set():
@@ -218,9 +226,13 @@ class _Renderer(Thread):
 # display 线程 (★ 唯一碰 cv2.imshow/pollKey 的地方)
 # ============================================================================
 class _Display(Thread):
-    """显示线程: imshow + pollKey (非阻塞) 抓键 + 暂停层."""
+    """显示线程: imshow + pollKey (非阻塞) 抓键 + 暂停层.
 
-    def __init__(self, out_q: Queue, window_name: str, controller: _Controller) -> None:
+    macOS 上此对象不在独立线程中运行, 而是由主线程直接调 ``run()``.
+    """
+
+    def __init__(self, out_q: Queue, window_name: str, controller: _Controller,
+                 key_queue: Queue | None = None) -> None:
         super().__init__(daemon=True)
         self._out = out_q
         self._win = window_name
@@ -229,6 +241,7 @@ class _Display(Thread):
         self._key_lock = Lock()
         self._key = -1
         self._last = None
+        self._key_queue = key_queue  # macOS: relay keys to inference worker
 
     def stop(self) -> None:
         self._stop_evt.set()
@@ -260,10 +273,179 @@ class _Display(Thread):
             if key != 255:
                 with self._key_lock:
                     self._key = key
+                # macOS: relay key to inference worker via shared queue
+                if self._key_queue is not None:
+                    try:
+                        self._key_queue.put_nowait(key)
+                    except Full:
+                        pass
         try:
             cv2.destroyAllWindows()
         except Exception:
             pass
+
+
+# ============================================================================
+# inference worker 线程 (macOS 适配: 主线程留给 display)
+# ============================================================================
+class _InferenceWorker(Thread):
+    """推理工作线程 — 从 reader 取帧 → 批量 predict → 派发到 renderer.
+
+    macOS 上此线程替代主线程做推理, 主线程专职 imshow/pollKey.
+    非 macOS 上不使用此类 (主线程直接做推理).
+    """
+
+    def __init__(
+        self,
+        reader: _Reader,
+        in_q: Queue,
+        processor,
+        stats,
+        m: Metrics,
+        *,
+        eff_batch: int,
+        warmup_frames: int,
+        render_drop: bool,
+        key_queue: Queue,
+        controller: _Controller,
+        hooks: InferHooks,
+        cancel_token: CancelToken | None,
+        start_time: float,
+    ) -> None:
+        super().__init__(daemon=True)
+        self._reader = reader
+        self._in = in_q
+        self._proc = processor
+        self._stats = stats
+        self._m = m
+        self._eff_batch = eff_batch
+        self._warmup_frames = warmup_frames
+        self._render_drop = render_drop
+        self._key_queue = key_queue
+        self._controller = controller
+        self._hooks = hooks
+        self._cancel_token = cancel_token
+        self._start_time = start_time
+        self._stop_evt = Event()
+        self.interrupted = False
+        self.first_batch_ready = Event()  # signals main thread: renderer can start
+
+    def stop(self) -> None:
+        self._stop_evt.set()
+
+    def _is_cancelled(self) -> bool:
+        return self._cancel_token is not None and self._cancel_token.is_cancelled()
+
+    def _check_key(self) -> bool:
+        """Read key from shared queue. Returns True to exit."""
+        try:
+            key = self._key_queue.get_nowait()
+        except Empty:
+            return False
+        if key in (ord("q"), 27):
+            logger.info("用户请求退出 (q/Esc).")
+            return True
+        if key == ord(" "):
+            self._controller.toggle()
+            logger.info("已暂停 (空格恢复)" if self._controller.is_paused() else "已恢复")
+        return False
+
+    def run(self) -> None:
+        warmed = 0
+        last_batch_end_t = None
+
+        while not self._stop_evt.is_set():
+            # 暂停处理
+            if self._controller.is_paused():
+                if self._is_cancelled():
+                    logger.info("收到取消信号 (暂停状态), 退出.")
+                    self.interrupted = True
+                    break
+                if self._check_key():
+                    self.interrupted = True
+                    break
+                time.sleep(0.02)
+                continue
+
+            if self._is_cancelled():
+                logger.info("收到取消信号, 退出推理循环.")
+                self.interrupted = True
+                break
+
+            # 取一批
+            first = self._reader.get(timeout=5.0)
+            if first is None:
+                if self._reader.error:
+                    logger.error(f"reader 异常: {self._reader.error}")
+                    raise self._reader.error
+                continue
+            if first is _SENTINEL:
+                break
+
+            batch = [first]
+            ended = False
+            for _ in range(self._eff_batch - 1):
+                nxt = self._reader.get_nowait()
+                if nxt is None:
+                    break
+                if nxt is _SENTINEL:
+                    ended = True
+                    break
+                batch.append(nxt)
+
+            # warmup
+            if warmed < self._warmup_frames:
+                warmed += len(batch)
+                if ended:
+                    break
+                continue
+
+            # 批量 predict
+            images = [f.image for f in batch]
+            results, labels_list, n_list, batch_dt = self._proc.infer_batch(images)
+            self._stats.infer_time_sec += batch_dt
+            # Signal main thread that first batch is ready (macOS lazy init)
+            self.first_batch_ready.set()
+            for frame, result, labels, n in zip(batch, results, labels_list, n_list):
+                self._stats.frames += 1
+                self._stats.detections += n
+                for name in labels:
+                    self._stats.per_class[name] = self._stats.per_class.get(name, 0) + 1
+                self._m.add_speed(getattr(result, "speed", None))
+                if self._render_drop:
+                    _put_latest(self._in, (frame, result, labels, n))
+                else:
+                    _put_block(self._in, (frame, result, labels, n))
+
+                if (self._hooks.on_progress is not None
+                        and self._stats.frames % self._hooks.progress_interval_frames == 0):
+                    self._hooks.fire_progress(ProgressEvent(
+                        frame_idx=self._stats.frames,
+                        total_frames=None,
+                        elapsed_sec=time.perf_counter() - self._start_time,
+                        fps_loop=self._m.loop.fps,
+                        fps_infer=self._m.infer.fps,
+                        detections_total=self._stats.detections,
+                    ))
+
+            # 批级测量 loop FPS
+            batch_end_t = time.perf_counter()
+            if last_batch_end_t is not None:
+                per_frame_loop_ms = (batch_end_t - last_batch_end_t) * 1000 / len(batch)
+                for _ in batch:
+                    self._m.loop.update(per_frame_loop_ms)
+            last_batch_end_t = batch_end_t
+
+            if self._is_cancelled():
+                logger.info("收到取消信号 (派发后), 退出.")
+                self.interrupted = True
+                break
+
+            if self._check_key():
+                self.interrupted = True
+                break
+            if ended:
+                break
 
 
 # ============================================================================
@@ -286,6 +468,7 @@ class ThreadedPipeline:
         show_info,
         window_name,
         warmup_frames,
+        stride: int = 1,
         hooks: InferHooks | None = None,
         cancel_token: CancelToken | None = None,
     ) -> None:
@@ -300,6 +483,7 @@ class ThreadedPipeline:
         self.show_info = show_info
         self.window_name = window_name
         self.warmup_frames = warmup_frames
+        self.stride = max(1, int(stride))
         self.hooks = hooks if hooks is not None else InferHooks()
         self.cancel_token = cancel_token
 
@@ -315,83 +499,46 @@ class ThreadedPipeline:
         render_drop = not self.save
 
         reader = _Reader(s, self.camera_config, live=live,
-                         capacity=max(eff_batch * 2, 8), capture_fps=m.capture)
+                         capacity=max(eff_batch * 2, 8), capture_fps=m.capture,
+                         stride=self.stride)
         in_q: Queue = Queue(maxsize=max(eff_batch * 2, 4))
         out_q: Queue = Queue(maxsize=2)
         controller = _Controller()
+        key_queue: Queue = Queue()  # macOS: display → inference worker key relay
 
         renderer = None
         display = None
         interrupted = False
-        warmed = 0
-        last_batch_end_t = None
-        start_time = time.perf_counter()
         sink_opened = False
+        start_time = time.perf_counter()
 
         reader.start()
-        logger.info(f"[DEBUG] 流水线启动, live={live}, batch={eff_batch}, warmup={self.warmup_frames}")
+        logger.info(f"[DEBUG] 流水线启动, live={live}, batch={eff_batch}, "
+                    f"warmup={self.warmup_frames}, macos={_is_macos()}")
 
-        try:
-            loop_count = 0
-            while True:
-                loop_count += 1
-                if loop_count == 1:
-                    logger.info("[DEBUG] 进入主循环, 等待首帧...")
+        if _is_macos() and self.show:
+            # ── macOS: 推理在后线程, 显示在主线程 ──
+            logger.info("macOS 检测: display 运行在主线程, 推理在后台线程.")
+            inference_worker = _InferenceWorker(
+                reader, in_q, self.proc, stats, m,
+                eff_batch=eff_batch,
+                warmup_frames=self.warmup_frames,
+                render_drop=render_drop,
+                key_queue=key_queue,
+                controller=controller,
+                hooks=self.hooks,
+                cancel_token=self.cancel_token,
+                start_time=start_time,
+            )
+            inference_worker.start()
 
-                # 暂停: 不 predict, 只查取消 + 读键
-                if controller.is_paused():
-                    if self._is_cancelled():           # ★ 查询点 1
-                        logger.info("收到取消信号 (暂停状态), 退出.")
-                        interrupted = True
-                        break
-                    if self._handle_key(display, controller):
-                        interrupted = True
-                        break
-                    time.sleep(0.02)
-                    continue
+            try:
+                # ── 等待首帧到达, 然后初始化 sink + renderer + display ──
+                inference_worker.first_batch_ready.wait(timeout=30.0)
+                if reader.error:
+                    raise reader.error
 
-                # ★ 查询点 2: 取批之前查
-                if self._is_cancelled():
-                    logger.info("收到取消信号, 退出主循环.")
-                    interrupted = True
-                    break
-
-                # 取一批 (摄像头初始化可能需要 3+ 秒, 超时给久一点)
-                first = reader.get(timeout=5.0)
-                if loop_count == 1:
-                    logger.info(f"[DEBUG] reader.get 返回: {type(first).__name__}, error={reader.error}")
-                if first is None:
-                    if reader.error:
-                        logger.error(f"[DEBUG] reader 异常: {reader.error}")
-                        raise reader.error
-                    logger.info(f"[DEBUG] 超时, 继续等待... (loop={loop_count})")
-                    continue
-                if first is _SENTINEL:
-                    logger.info("[DEBUG] 收到哨兵, 流水线退出")
-                    break
-                batch = [first]
-                ended = False
-                for _ in range(eff_batch - 1):
-                    nxt = reader.get_nowait()
-                    if nxt is None:
-                        break
-                    if nxt is _SENTINEL:
-                        ended = True
-                        break
-                    batch.append(nxt)
-
-                # warmup: 丢弃前 N 帧
-                if warmed < self.warmup_frames:
-                    warmed += len(batch)
-                    if loop_count == 1:
-                        logger.info(f"[DEBUG] warmup: {warmed}/{self.warmup_frames}")
-                    if ended:
-                        break
-                    continue
-
-                # 首批时拉起 renderer/display + 开 sink
-                if renderer is None:
-                    logger.info(f"[DEBUG] 首批帧到达, 初始化 renderer/display, 帧数={len(batch)}")
+                if inference_worker.first_batch_ready.is_set():
                     try:
                         self.sink.open(self.output_dir, reader.source_type)
                         sink_opened = True
@@ -412,73 +559,169 @@ class ThreadedPipeline:
                         hooks=self.hooks,
                     )
                     renderer.start()
-                    if self.show:
-                        display = _Display(out_q, self.window_name, controller)
-                        display.start()
 
-                # --- 主线程: 批量 predict ---
-                images = [f.image for f in batch]
-                results, labels_list, n_list, batch_dt = self.proc.infer_batch(images)
-                stats.infer_time_sec += batch_dt
-                for frame, result, labels, n in zip(batch, results, labels_list, n_list):
-                    stats.frames += 1
-                    stats.detections += n
-                    for name in labels:
-                        stats.per_class[name] = stats.per_class.get(name, 0) + 1
-                    m.add_speed(getattr(result, "speed", None))
-                    # 不在这里 update m.loop, 批级测量在循环外做
-                    if render_drop:
-                        _put_latest(in_q, (frame, result, labels, n))
-                    else:
-                        _put_block(in_q, (frame, result, labels, n))
+                    # ★ 主线程跑 display (macOS 要求)
+                    display = _Display(out_q, self.window_name, controller, key_queue=key_queue)
+                    display.run()  # blocking — returns when display loop exits
 
-                    # ★ 周期 fire_progress
-                    if (self.hooks.on_progress is not None
-                            and stats.frames % self.hooks.progress_interval_frames == 0):
-                        self.hooks.fire_progress(ProgressEvent(
-                            frame_idx=stats.frames,
-                            total_frames=None,
-                            elapsed_sec=time.perf_counter() - start_time,
-                            fps_loop=m.loop.fps,
-                            fps_infer=m.infer.fps,
-                            detections_total=stats.detections,
-                        ))
+                interrupted = inference_worker.interrupted
+            finally:
+                reader.stop()
+                _put_block(in_q, _SENTINEL)
+                if inference_worker.is_alive():
+                    inference_worker.stop()
+                    inference_worker.join(timeout=3.0)
+                if renderer is not None:
+                    renderer.stop()
+                    renderer.join(timeout=3.0)
+                if sink_opened:
+                    try:
+                        self.sink.close()
+                    except Exception as e:
+                        logger.warning(f"sink.close 异常 (已吞): {e}")
 
-                # ★ 批级测量 loop FPS, 均摊到每帧填窗口
-                batch_end_t = time.perf_counter()
-                if last_batch_end_t is not None:
-                    per_frame_loop_ms = (batch_end_t - last_batch_end_t) * 1000 / len(batch)
-                    for _ in batch:
-                        m.loop.update(per_frame_loop_ms)
-                last_batch_end_t = batch_end_t
+        else:
+            # ── 非 macOS: 主线程做推理 + display 在独立线程 (原有行为) ──
+            warmed = 0
+            last_batch_end_t = None
 
-                # ★ 查询点 3: 派发完查
-                if self._is_cancelled():
-                    logger.info("收到取消信号 (派发后), 退出.")
-                    interrupted = True
-                    break
+            try:
+                loop_count = 0
+                while True:
+                    loop_count += 1
+                    if loop_count == 1:
+                        logger.info("[DEBUG] 进入主循环, 等待首帧...")
 
-                # ★ 查询点 4: 读键
-                if self._handle_key(display, controller):
-                    interrupted = True
-                    break
-                if ended:
-                    break
-        finally:
-            reader.stop()
-            _put_block(in_q, _SENTINEL)
-            if renderer is not None:
-                renderer.join(timeout=3.0)
-                renderer.stop()
-            if display is not None:
-                time.sleep(0.05)
-                display.stop()
-                display.join(timeout=1.0)
-            if sink_opened:
-                try:
-                    self.sink.close()
-                except Exception as e:
-                    logger.warning(f"sink.close 异常 (已吞): {e}")
+                    if controller.is_paused():
+                        if self._is_cancelled():
+                            logger.info("收到取消信号 (暂停状态), 退出.")
+                            interrupted = True
+                            break
+                        if self._handle_key(display, controller):
+                            interrupted = True
+                            break
+                        time.sleep(0.02)
+                        continue
+
+                    if self._is_cancelled():
+                        logger.info("收到取消信号, 退出主循环.")
+                        interrupted = True
+                        break
+
+                    first = reader.get(timeout=5.0)
+                    if loop_count == 1:
+                        logger.info(f"[DEBUG] reader.get 返回: {type(first).__name__}, error={reader.error}")
+                    if first is None:
+                        if reader.error:
+                            logger.error(f"[DEBUG] reader 异常: {reader.error}")
+                            raise reader.error
+                        logger.info(f"[DEBUG] 超时, 继续等待... (loop={loop_count})")
+                        continue
+                    if first is _SENTINEL:
+                        logger.info("[DEBUG] 收到哨兵, 流水线退出")
+                        break
+                    batch = [first]
+                    ended = False
+                    for _ in range(eff_batch - 1):
+                        nxt = reader.get_nowait()
+                        if nxt is None:
+                            break
+                        if nxt is _SENTINEL:
+                            ended = True
+                            break
+                        batch.append(nxt)
+
+                    if warmed < self.warmup_frames:
+                        warmed += len(batch)
+                        if loop_count == 1:
+                            logger.info(f"[DEBUG] warmup: {warmed}/{self.warmup_frames}")
+                        if ended:
+                            break
+                        continue
+
+                    if renderer is None:
+                        logger.info(f"[DEBUG] 首批帧到达, 初始化 renderer/display, 帧数={len(batch)}")
+                        try:
+                            self.sink.open(self.output_dir, reader.source_type)
+                            sink_opened = True
+                        except Exception as e:
+                            logger.error(f"sink.open 失败, 退化用 NullSink: {e}")
+                            self.sink = NullSink()
+                            self.sink.open(self.output_dir, reader.source_type)
+                            sink_opened = True
+
+                        renderer = _Renderer(
+                            self.proc, in_q, out_q,
+                            drop=render_drop,
+                            output_sink=self.sink,
+                            show=self.show,
+                            show_info=self.show_info,
+                            recording=self.save,
+                            metrics=m,
+                            hooks=self.hooks,
+                        )
+                        renderer.start()
+                        if self.show:
+                            display = _Display(out_q, self.window_name, controller)
+                            display.start()
+
+                    images = [f.image for f in batch]
+                    results, labels_list, n_list, batch_dt = self.proc.infer_batch(images)
+                    stats.infer_time_sec += batch_dt
+                    for frame, result, labels, n in zip(batch, results, labels_list, n_list):
+                        stats.frames += 1
+                        stats.detections += n
+                        for name in labels:
+                            stats.per_class[name] = stats.per_class.get(name, 0) + 1
+                        m.add_speed(getattr(result, "speed", None))
+                        if render_drop:
+                            _put_latest(in_q, (frame, result, labels, n))
+                        else:
+                            _put_block(in_q, (frame, result, labels, n))
+
+                        if (self.hooks.on_progress is not None
+                                and stats.frames % self.hooks.progress_interval_frames == 0):
+                            self.hooks.fire_progress(ProgressEvent(
+                                frame_idx=stats.frames,
+                                total_frames=None,
+                                elapsed_sec=time.perf_counter() - start_time,
+                                fps_loop=m.loop.fps,
+                                fps_infer=m.infer.fps,
+                                detections_total=stats.detections,
+                            ))
+
+                    batch_end_t = time.perf_counter()
+                    if last_batch_end_t is not None:
+                        per_frame_loop_ms = (batch_end_t - last_batch_end_t) * 1000 / len(batch)
+                        for _ in batch:
+                            m.loop.update(per_frame_loop_ms)
+                    last_batch_end_t = batch_end_t
+
+                    if self._is_cancelled():
+                        logger.info("收到取消信号 (派发后), 退出.")
+                        interrupted = True
+                        break
+
+                    if self._handle_key(display, controller):
+                        interrupted = True
+                        break
+                    if ended:
+                        break
+            finally:
+                reader.stop()
+                _put_block(in_q, _SENTINEL)
+                if renderer is not None:
+                    renderer.join(timeout=3.0)
+                    renderer.stop()
+                if display is not None:
+                    time.sleep(0.05)
+                    display.stop()
+                    display.join(timeout=1.0)
+                if sink_opened:
+                    try:
+                        self.sink.close()
+                    except Exception as e:
+                        logger.warning(f"sink.close 异常 (已吞): {e}")
 
         _write_fps(stats, m)
         logger.info("流水线收尾: 捕获 %.1f | 推理 %.1f | 渲染 %.1f | loop %.1f FPS"

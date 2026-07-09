@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -23,11 +23,25 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # ── 运行时数据:dataclass ──────────────────────────────────────
 @dataclass
 class Detection:
-    """单个检测结果(运行时数据,每帧高频创建)。"""
-    box: Tuple[int, int, int, int]  # (x1, y1, x2, y2)
-    confidence: float
-    label: str
+    """单个检测结果(运行时数据,每帧高频创建)。
+
+    按 YOLO 任务类型使用不同字段组合:
+
+    - detect:  ``box`` + ``confidence`` + ``label``
+    - segment: ``box`` + ``mask`` (Nx2 多边形点集)
+    - pose:    ``box`` + ``keypoints`` (Kx3: x,y,conf)
+    - obb:     ``obb`` (cx,cy,w,h,angle 或 4 角点)
+    - classify:``probs`` (top-K 类别+置信度列表), ``box`` 为 None
+    """
+    box: Optional[Tuple[int, int, int, int]] = None  # (x1, y1, x2, y2), classify 时为 None
+    confidence: float = 0.0
+    label: str = ""
     color: Tuple[int, int, int] = (0, 255, 0)  # BGR
+    # 按任务类型只填其一:
+    mask: Optional[Any] = None           # np.ndarray — 分割多边形点集 (N,2)
+    keypoints: Optional[Any] = None      # np.ndarray — 姿态关键点 (K,3): x,y,conf
+    obb: Optional[Any] = None            # np.ndarray — OBB 4角点 (4,2) 或 (cx,cy,w,h,angle)
+    probs: Optional[List[Tuple[str, float]]] = None  # 分类 top-K
 
 
 class LabelPosition(Enum):
@@ -78,6 +92,11 @@ class DrawStyle(BaseModel):
         default=(0, 0, 0),
         description="文本 BGR 颜色",
     )
+
+    # -- 任务特定样式 --
+    mask_alpha: float = Field(default=0.4, ge=0.0, le=1.0, description="分割掩码透明度")
+    keypoint_radius: int = Field(default=4, ge=1, le=20, description="姿态关键点半径")
+    skeleton_thickness: int = Field(default=2, ge=1, le=10, description="姿态骨架线宽")
 
     @field_validator("text_color")
     @classmethod

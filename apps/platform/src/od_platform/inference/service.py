@@ -25,16 +25,22 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 from argparse import Namespace
 
-from ultralytics import YOLO
+import numpy as np
+
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None  # type: ignore[assignment]
 
 from od_platform.common.log_rename import rename_log_to_save_dir
 from od_platform.common.model_path import resolve_model_path
@@ -192,6 +198,7 @@ class InferService:
         rename_log: bool = True,
         threaded: bool = False,
         warmup_frames: int = 0,
+        stride: int | None = None,
         window_name: str = "odp-infer",
         show_info: bool = True,
         # ---- ★ 接缝参数 (业务定制), keyword-only + 默认 None 让 CLI 行为不变 ----
@@ -207,8 +214,9 @@ class InferService:
             cli_args:      CLI 覆盖字段 (source/conf/show/save/...), 交给 D5 merger.
             beautify:      是否美化. False → 退回 YOLO 原生 plot().
             rename_log:    是否把日志名改成跟 output_dir 对齐.
-            threaded:      历史遗留, 现在永远是多线程, 这个参数被忽略.
+            threaded:      已弃用 — pipeline 内置 4 线程, 此参数无效果.
             warmup_frames: 启动丢弃前 N 帧 (摄像头帧率不稳).
+            stride:       帧间隔(每 N 帧取 1), None 则用 pipeline yaml 的值.
             window_name:   显示窗口标题 (--show 时).
             show_info:     是否画 HUD 信息面板.
             output_sink:   自定义输出适配器 (默认根据 want_save 选 LocalFileSink / NullSink).
@@ -222,213 +230,74 @@ class InferService:
         if hooks is None:
             hooks = InferHooks()
 
+        if threaded:
+            logger.warning(
+                "threaded 参数已弃用 — pipeline 内置 4 线程架构, "
+                "此参数无效果, 将在未来版本移除."
+            )
+
         start = datetime.now()
         output_dir: Path | None = None
 
         try:
-            # ================================================================
-            # 阶段 1: 配置加载
-            # ================================================================
-            config, merger = build_infer_config(
-                yaml_path=yaml_path or "infer.yaml",
-                cli_args=cli_args if isinstance(cli_args, Namespace) else Namespace(**cli_args) if cli_args else None,
-            )
-            pipe: PipelineConfig = load_pipeline_config(pipeline_yaml)
+            # 阶段 1-2: 配置加载 + 上下文日志
+            config, merger, pipe = self._load_configs(yaml_path, pipeline_yaml, cli_args)
 
-            # ================================================================
-            # 阶段 2: 上下文日志
-            # ================================================================
-            logger.info("=" * 60)
-            logger.info(f"开始 YOLO 推理 (task={config.task})".center(60))
-            logger.info("=" * 60)
-
-            raw_model = config.model or "yolo11n.pt"
-            raw_source = config.source
-            logger.info(f"任务类型:    {config.task}")
-            logger.info(f"输入源(声明): {raw_source!r}")
-            logger.info(f"模型(声明):  {raw_model}")
-
-            # log_device_info()
-            log_effective_config(config, merger, logger=logger)
-            log_override_chains(config, merger, logger=logger)
-
-            # ================================================================
             # 阶段 3: 源 + 模型解析
-            # ================================================================
-            if raw_source is None:
-                raise RuntimeError(
-                    "未指定推理输入源. 请在 infer.yaml 写 source, 或用 "
-                    "`odp-infer --source <图/视频/目录/摄像头号>` 传入."
-                )
+            raw_source, model_path = self._resolve_model_and_source(config)
 
-            model_path = resolve_model_path(
-                raw_model,
-                search_dirs=[TRAINED_MODELS_DIR, PRETRAINED_MODELS_DIR],
+            # 阶段 4: 加载模型 + 美化器 + 输出目录 + sink
+            setup = self._setup_inference(
+                config, pipe, model_path, beautify, output_sink, raw_source,
             )
-            logger.info(f"模型(解析):  {model_path}")
+            model = setup["model"]
+            output_dir = setup["output_dir"]
+            output_sink = setup["output_sink"]
+            do_beautify = setup["do_beautify"]
+            visualizer = setup["visualizer"]
+            predict_kwargs = setup["predict_kwargs"]
+            want_save = setup["want_save"]
+            want_show = setup["want_show"]
 
-            # ================================================================
-            # 阶段 4: 加载模型 + 建美化器 + 建输出目录 + 决定 sink
-            # ================================================================
-            model = YOLO(str(model_path))
-            class_names: list[str] = list(model.names.values())
-
-            do_beautify = beautify and pipe.viz_enabled
-            visualizer: BeautifyVisualizer | None = None
-            if do_beautify:
-                visualizer = BeautifyVisualizer(
-                    labels=class_names,
-                    label_mapping=pipe.label_mapping or None,
-                    color_mapping=pipe.color_mapping or None,
-                    default_color=pipe.default_color,
-                    font_path=pipe.font_path,
-                )
-            else:
-                logger.info("美化已关闭, 使用 YOLO 原生 plot() 绘制.")
-
-            # 输出根: runs/<task>_infer/<name> —— 跟训练 runs/<task>_train 对齐
-            run_name = config.experiment_name or "predict"
-            output_dir = _resolve_output_dir(
-                RUNS_DIR / f"{config.task}_infer",
-                run_name,
-                exist_ok=bool(getattr(config, "exist_ok", False)),
-            )
-            logger.info(f"输出目录:    {output_dir}")
-
-            # 逐帧 predict 计算参数 (白名单, 不盲传整个 config)
-            predict_kwargs = {
-                k: getattr(config, k)
-                for k in _PREDICT_KEYS
-                if getattr(config, k, None) is not None
-            }
-            predict_kwargs["verbose"] = False
-
-            want_save = bool(getattr(config, "save", True))
-            want_show = bool(getattr(config, "show", False))
-
-            # ★ 决定 sink: 调用方没传 → 按 want_save 自动选 LocalFileSink / NullSink
-            #   调用方传了 → 用调用方的 (此时 want_save 仅影响 pipeline 的派发策略)
-            if output_sink is None:
-                output_sink = LocalFileSink() if want_save else NullSink()
-                _sink_owned = True
-            else:
-                _sink_owned = False
-                logger.info(f"使用调用方提供的 sink: {output_sink.__class__.__name__}")
-
-            # ================================================================
-            # 阶段 5: 执行推理
-            # ================================================================
-            logger.info("=" * 60)
-            logger.info("启动推理".center(60))
-            logger.info("=" * 60)
-
-            stats = InferStats()
-            camera_cfg = pipe.build_camera_config()
-            processor = _FrameProcessor(
+            # 阶段 5: 执行推理流水线
+            stats, interrupted = self._run_pipeline(
+                config=config,
+                pipe=pipe,
                 model=model,
-                predict_kwargs=predict_kwargs,
-                do_beautify=do_beautify,
-                visualizer=visualizer,
-                use_label_mapping=pipe.use_label_mapping,
-                style_overrides=pipe.style_overrides,
-                names=model.names,
-            )
-
-            raw_batch = getattr(config, "batch", 16)
-            batch_size = raw_batch if isinstance(raw_batch, int) and raw_batch >= 1 else 16
-
-            from .pipeline import ThreadedPipeline
-            logger.info(f"执行引擎: 多线程流水线 (batch={batch_size}, 显示与主循环解耦)")
-            pipeline = ThreadedPipeline(
-                processor=processor,
-                source=str(raw_source),
-                camera_config=camera_cfg,
                 output_dir=output_dir,
                 output_sink=output_sink,
-                batch_size=batch_size,
-                save=want_save,
-                show=want_show,
+                do_beautify=do_beautify,
+                visualizer=visualizer,
+                predict_kwargs=predict_kwargs,
+                want_save=want_save,
+                want_show=want_show,
                 show_info=show_info,
                 window_name=window_name,
                 warmup_frames=warmup_frames,
+                stride=stride,
                 hooks=hooks,
                 cancel_token=cancel_token,
             )
-            interrupted = pipeline.run(stats)
 
             if interrupted:
                 logger.warning("推理被用户提前结束.")
 
-            # ================================================================
-            # 阶段 6: 推理统计
-            # ================================================================
-            logger.info("=" * 60)
-            logger.info("推理完成".center(60))
-            logger.info("=" * 60)
-            log_infer_stats(stats, logger=logger)
-
-            # ================================================================
-            # 阶段 7: 整理输出
-            # ================================================================
-            model_stem = Path(raw_model).stem
-            if rename_log:
-                rename_log_to_save_dir(output_dir, model_stem)
-
-            # ================================================================
-            # 阶段 8: 审计快照
-            # ================================================================
-            audit_path: Path | None = output_dir / "odp_audit.json"
-            log_path = _find_project_log_path()
-            try:
-                audit_payload = {
-                    "mode": "infer",
-                    "config": config.to_audit_snapshot(),
-                    "merger": merger.to_audit_log(),
-                    "pipeline": pipe.to_audit(),
-                    "stats": stats.to_dict(),
-                    "result_summary": {
-                        "output_dir": str(output_dir),
-                        "saved": want_save,
-                        "beautified": do_beautify,
-                        "infer_time_sec": (datetime.now() - start).total_seconds(),
-                        "log_path": str(log_path) if log_path else None,
-                    },
-                }
-                audit_path.write_text(
-                    json.dumps(audit_payload, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-                logger.info(f"审计快照:   {audit_path}")
-            except OSError as e:
-                logger.warning(f"写审计快照失败 (不影响推理结果): {e}")
-                audit_path = None
-
-            # ---- 收尾 ----
-            infer_time = (datetime.now() - start).total_seconds()
-            logger.info("=" * 60)
-            logger.info(f"推理总耗时: {infer_time:.2f} 秒")
-            logger.info(f"输出目录:   {output_dir}")
-            if want_save:
-                logger.info(f"结果已保存到上面的目录.")
-            if log_path:
-                logger.info(f"本次日志:   {log_path}")
-            logger.info("=" * 60)
-
-            result = InferResult(
-                success=True,
+            # 阶段 6-8: 统计 + 输出整理 + 审计
+            result = self._finalize(
+                stats=stats,
+                config=config,
+                merger=merger,
+                pipe=pipe,
                 output_dir=output_dir,
-                stats=stats.to_dict(),
-                infer_time=infer_time,
-                saved=want_save,
-                audit_path=audit_path,
-                log_path=log_path,
+                raw_model=config.model or "yolo11n.pt",
+                want_save=want_save,
+                do_beautify=do_beautify,
+                rename_log=rename_log,
+                start=start,
             )
             hooks.fire_complete(result)
             return result
 
-        # ====================================================================
-        # 顶层异常拦截 —— 永不抛, 打包成 InferResult.error
-        # ====================================================================
         except Exception as e:
             logger.error(f"推理失败: {e}", exc_info=True)
             infer_time = (datetime.now() - start).total_seconds()
@@ -441,6 +310,221 @@ class InferService:
                 error=str(e),
                 log_path=_find_project_log_path(),
             )
+
+    # ── 私有方法: 阶段分解 ─────────────────────────────────────────
+
+    @staticmethod
+    def _load_configs(
+        yaml_path: str | Path | None,
+        pipeline_yaml: str | Path | None,
+        cli_args: dict[str, Any] | None,
+    ) -> tuple[Any, Any, PipelineConfig]:
+        """阶段 1-2: 加载 D5 config + pipeline config + 上下文日志."""
+        config, merger = build_infer_config(
+            yaml_path=yaml_path or "infer.yaml",
+            cli_args=cli_args if isinstance(cli_args, Namespace) else Namespace(**cli_args) if cli_args else None,
+        )
+        pipe: PipelineConfig = load_pipeline_config(pipeline_yaml)
+
+        logger.info("=" * 60)
+        logger.info(f"开始 YOLO 推理 (task={config.task})".center(60))
+        logger.info("=" * 60)
+
+        raw_model = config.model or "yolo11n.pt"
+        raw_source = config.source
+        logger.info(f"任务类型:    {config.task}")
+        logger.info(f"输入源(声明): {raw_source!r}")
+        logger.info(f"模型(声明):  {raw_model}")
+
+        log_effective_config(config, merger, logger=logger)
+        log_override_chains(config, merger, logger=logger)
+
+        return config, merger, pipe
+
+    @staticmethod
+    def _resolve_model_and_source(config) -> tuple[str, Path]:
+        """阶段 3: 验证 source + 解析 model 路径."""
+        raw_source = config.source
+        if raw_source is None:
+            raise RuntimeError(
+                "未指定推理输入源. 请在 infer.yaml 写 source, 或用 "
+                "`odp-infer --source <图/视频/目录/摄像头号>` 传入."
+            )
+
+        model_path = resolve_model_path(
+            config.model or "yolo11n.pt",
+            search_dirs=[TRAINED_MODELS_DIR, PRETRAINED_MODELS_DIR],
+        )
+        logger.info(f"模型(解析):  {model_path}")
+        return raw_source, model_path
+
+    @staticmethod
+    def _setup_inference(
+        config, pipe: PipelineConfig, model_path: Path,
+        beautify: bool, output_sink: OutputSink | None, raw_source: str,
+    ) -> dict[str, Any]:
+        """阶段 4: 加载模型 + 建美化器 + 建输出目录 + 决定 sink."""
+        if YOLO is None:
+            raise ImportError("ultralytics is required for inference. Install with: pip install ultralytics")
+        model = YOLO(str(model_path))
+        class_names: list[str] = list(model.names.values())
+
+        do_beautify = beautify and pipe.viz_enabled
+        visualizer: BeautifyVisualizer | None = None
+        if do_beautify:
+            visualizer = BeautifyVisualizer(
+                labels=class_names,
+                label_mapping=pipe.label_mapping or None,
+                color_mapping=pipe.color_mapping or None,
+                default_color=pipe.default_color,
+                font_path=pipe.font_path,
+            )
+        else:
+            logger.info("美化已关闭, 使用 YOLO 原生 plot() 绘制.")
+
+        run_name = config.experiment_name or "predict"
+        _output_dir = _resolve_output_dir(
+            RUNS_DIR / f"{config.task}_infer",
+            run_name,
+            exist_ok=bool(getattr(config, "exist_ok", False)),
+        )
+        logger.info(f"输出目录:    {_output_dir}")
+
+        predict_kwargs = {
+            k: getattr(config, k)
+            for k in _PREDICT_KEYS
+            if getattr(config, k, None) is not None
+        }
+        predict_kwargs["verbose"] = False
+
+        want_save = bool(getattr(config, "save", True))
+        want_show = bool(getattr(config, "show", False))
+
+        if output_sink is None:
+            output_sink = LocalFileSink() if want_save else NullSink()
+        else:
+            logger.info(f"使用调用方提供的 sink: {output_sink.__class__.__name__}")
+
+        return {
+            "model": model,
+            "output_dir": _output_dir,
+            "output_sink": output_sink,
+            "do_beautify": do_beautify,
+            "visualizer": visualizer,
+            "predict_kwargs": predict_kwargs,
+            "want_save": want_save,
+            "want_show": want_show,
+        }
+
+    @staticmethod
+    def _run_pipeline(
+        *, config, pipe, model, output_dir, output_sink,
+        do_beautify, visualizer, predict_kwargs,
+        want_save, want_show, show_info, window_name,
+        warmup_frames, stride, hooks, cancel_token,
+    ) -> tuple[InferStats, bool]:
+        """阶段 5: 创建 _FrameProcessor + ThreadedPipeline, 执行推理."""
+        logger.info("=" * 60)
+        logger.info("启动推理".center(60))
+        logger.info("=" * 60)
+
+        stats = InferStats()
+        camera_cfg = pipe.build_camera_config()
+        processor = _FrameProcessor(
+            model=model,
+            predict_kwargs=predict_kwargs,
+            do_beautify=do_beautify,
+            visualizer=visualizer,
+            use_label_mapping=pipe.use_label_mapping,
+            style_overrides=pipe.style_overrides,
+            names=model.names,
+        )
+
+        raw_batch = getattr(config, "batch", 16)
+        batch_size = raw_batch if isinstance(raw_batch, int) and raw_batch >= 1 else 16
+
+        from .pipeline import ThreadedPipeline
+        logger.info(f"执行引擎: 多线程流水线 (batch={batch_size}, 显示与主循环解耦)")
+        pipeline = ThreadedPipeline(
+            processor=processor,
+            source=str(config.source),
+            camera_config=camera_cfg,
+            output_dir=output_dir,
+            output_sink=output_sink,
+            batch_size=batch_size,
+            save=want_save,
+            show=want_show,
+            show_info=show_info,
+            window_name=window_name,
+            warmup_frames=warmup_frames,
+            stride=stride if stride is not None else pipe.frame_stride,
+            hooks=hooks,
+            cancel_token=cancel_token,
+        )
+        interrupted = pipeline.run(stats)
+        return stats, interrupted
+
+    @staticmethod
+    def _finalize(
+        *, stats: InferStats, config, merger, pipe: PipelineConfig,
+        output_dir: Path, raw_model: str, want_save: bool,
+        do_beautify: bool, rename_log: bool, start,
+    ) -> InferResult:
+        """阶段 6-8: 统计 + 输出整理 + 审计快照 + 返回 InferResult."""
+        logger.info("=" * 60)
+        logger.info("推理完成".center(60))
+        logger.info("=" * 60)
+        log_infer_stats(stats, logger=logger)
+
+        model_stem = Path(raw_model).stem
+        if rename_log:
+            rename_log_to_save_dir(output_dir, model_stem)
+
+        audit_path: Path | None = output_dir / "odp_audit.json"
+        log_path = _find_project_log_path()
+        try:
+            audit_payload = {
+                "mode": "infer",
+                "config": config.to_audit_snapshot(),
+                "merger": merger.to_audit_log(),
+                "pipeline": pipe.to_audit(),
+                "stats": stats.to_dict(),
+                "result_summary": {
+                    "output_dir": str(output_dir),
+                    "saved": want_save,
+                    "beautified": do_beautify,
+                    "infer_time_sec": (datetime.now() - start).total_seconds(),
+                    "log_path": str(log_path) if log_path else None,
+                },
+            }
+            audit_path.write_text(
+                json.dumps(audit_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            logger.info(f"审计快照:   {audit_path}")
+        except OSError as e:
+            logger.warning(f"写审计快照失败 (不影响推理结果): {e}")
+            audit_path = None
+
+        infer_time = (datetime.now() - start).total_seconds()
+        logger.info("=" * 60)
+        logger.info(f"推理总耗时: {infer_time:.2f} 秒")
+        logger.info(f"输出目录:   {output_dir}")
+        if want_save:
+            logger.info(f"结果已保存到上面的目录.")
+        if log_path:
+            logger.info(f"本次日志:   {log_path}")
+        logger.info("=" * 60)
+
+        return InferResult(
+            success=True,
+            output_dir=output_dir,
+            stats=stats.to_dict(),
+            infer_time=infer_time,
+            saved=want_save,
+            audit_path=audit_path,
+            log_path=log_path,
+        )
 
 
 # ============================================================================
@@ -474,16 +558,62 @@ class _FrameProcessor:
         return results, labels_list, n_list, batch_dt
 
     def draw(self, image, result, labels, n):
-        """绘制单帧 → annotated(BGR). 美化关时退回 YOLO 原生 plot()."""
+        """绘制单帧 → annotated(BGR). 美化关时退回 YOLO 原生 plot().
+
+        按 YOLO 模型的 task 类型提取对应数据:
+          - detect  → boxes
+          - segment → boxes + masks
+          - pose    → boxes + keypoints
+          - obb     → obb corners
+          - classify→ probs
+        """
         if self.do_beautify and self.visualizer is not None:
             if self._style is None:
                 h, w = image.shape[:2]
                 self._style = DrawStyle.from_image_size(h, w, **self.style_overrides)
+
+            task_type = _get_task_type(self.model)
+
+            if task_type == "classify":
+                probs = result.probs
+                if probs is not None:
+                    top5_labels = [self.names.get(i, f"cls_{i}") for i in probs.top5]
+                    top5_confs = probs.top5conf.tolist()
+                    dets = BeautifyVisualizer.from_yolo_results(
+                        boxes=_empty_boxes(),
+                        confidences=np.array(top5_confs),
+                        labels=top5_labels,
+                        task_type="classify",
+                        probs=list(zip(top5_labels, top5_confs)),
+                    )
+                else:
+                    dets = []
+                return self.visualizer.draw(
+                    image, dets, style=self._style, use_label_mapping=self.use_label_mapping,
+                )
+
             boxes = result.boxes
+            kwargs: dict = {}
+            if task_type == "segment":
+                if hasattr(result, "masks") and result.masks is not None:
+                    kwargs["masks"] = result.masks.xy if hasattr(result.masks, "xy") else None
+                kwargs["task_type"] = "segment"
+            elif task_type == "pose":
+                if hasattr(result, "keypoints") and result.keypoints is not None:
+                    kwargs["keypoints"] = result.keypoints.data.cpu().numpy()
+                kwargs["task_type"] = "pose"
+            elif task_type == "obb":
+                if hasattr(result, "obb") and result.obb is not None:
+                    kwargs["obb"] = result.obb.xyxyxyxy.cpu().numpy() if n else None
+                kwargs["task_type"] = "obb"
+            else:
+                kwargs["task_type"] = "detect"
+
             dets = BeautifyVisualizer.from_yolo_results(
                 boxes=(boxes.xyxy.cpu().numpy() if n else _empty_boxes()),
                 confidences=(boxes.conf.cpu().numpy() if n else _empty_conf()),
                 labels=labels,
+                **kwargs,
             )
             return self.visualizer.draw(
                 image, dets, style=self._style, use_label_mapping=self.use_label_mapping,
@@ -492,13 +622,21 @@ class _FrameProcessor:
 
 
 def _empty_boxes():
-    import numpy as np
     return np.zeros((0, 4), dtype=float)
 
 
 def _empty_conf():
-    import numpy as np
     return np.zeros((0,), dtype=float)
+
+
+def _get_task_type(model) -> str:
+    """Extract task type from a loaded YOLO model.
+
+    Returns one of: "detect", "segment", "pose", "classify", "obb".
+    """
+    overrides = getattr(model, "overrides", {}) or {}
+    task = overrides.get("task", "") or getattr(model, "task", "") or "detect"
+    return str(task)
 
 
 def infer_yolo(
@@ -510,6 +648,7 @@ def infer_yolo(
     rename_log: bool = True,
     threaded: bool = False,
     warmup_frames: int = 0,
+    stride: int | None = None,
     window_name: str = "odp-infer",
     show_info: bool = True,
     output_sink: OutputSink | None = None,
@@ -526,9 +665,84 @@ def infer_yolo(
         rename_log=rename_log,
         threaded=threaded,
         warmup_frames=warmup_frames,
+        stride=stride,
         window_name=window_name,
         show_info=show_info,
         output_sink=output_sink,
         hooks=hooks,
         cancel_token=cancel_token,
     )
+
+
+async def infer_yolo_async(
+    source: str,
+    model_path: str | Path,
+    *,
+    yaml_path: str | Path | None = None,
+    pipeline_yaml: str | Path | None = None,
+    conf: float = 0.25,
+    iou: float = 0.7,
+    imgsz: int = 640,
+    device: str | None = None,
+    stride: int = 1,
+    show: bool = False,
+) -> AsyncIterator[dict[str, Any]]:
+    """异步逐帧推理 — 适合 FastAPI / web 场景.
+
+    Yields per-frame dicts: ``{"frame_idx": int, "detections": list[dict], ...}``
+
+    Example::
+
+        async for result in infer_yolo_async("0", "yolo11n.pt"):
+            print(result["frame_idx"], len(result["detections"]))
+    """
+    if YOLO is None:
+        raise ImportError("ultralytics is required for inference. Install with: pip install ultralytics")
+
+    from od_platform.frame_source import create_async_source
+
+    model = YOLO(str(model_path))
+    class_names: list[str] = list(model.names.values())
+
+    predict_kwargs: dict[str, Any] = {
+        "conf": conf, "iou": iou, "imgsz": imgsz,
+        "verbose": False,
+    }
+    if device:
+        predict_kwargs["device"] = device
+
+    async_source = create_async_source(source)
+    await async_source.open()
+    async_source.set_stride(stride)
+
+    frame_idx = 0
+    try:
+        async for frame in async_source:
+            results = await asyncio.to_thread(
+                model, frame.image, **predict_kwargs
+            )
+            result = results[0]
+            boxes = result.boxes
+            n = 0 if boxes is None else len(boxes)
+
+            detections = []
+            if n:
+                xyxy = boxes.xyxy.cpu().numpy()
+                confs = boxes.conf.cpu().numpy()
+                cls_ids = boxes.cls.int().cpu().tolist()
+                for i in range(n):
+                    detections.append({
+                        "box": [float(x) for x in xyxy[i]],
+                        "confidence": float(confs[i]),
+                        "label": class_names[cls_ids[i]],
+                    })
+
+            yield {
+                "frame_idx": frame_idx,
+                "detections": detections,
+                "n_detections": n,
+                "speed": getattr(result, "speed", None),
+            }
+            frame_idx += 1
+    finally:
+        await async_source.close()

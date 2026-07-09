@@ -23,12 +23,13 @@
 from .cancel import CancelToken, InferenceCancelled
 from .hooks import FrameEvent, InferHooks, ProgressEvent
 from .pipeline_config import PipelineConfig, load_pipeline_config
-from .service import InferResult, InferService, InferStats, infer_yolo, log_infer_stats
+from .service import InferResult, InferService, InferStats, infer_yolo, infer_yolo_async, log_infer_stats
 from .sinks import LocalFileSink, NullSink, OutputSink
 
 __all__ = [
     # 主入口 (跟 D6 train_yolo 平行)
     "infer_yolo",
+    "infer_yolo_async",
     # Service / Result / Stats
     "InferService", "InferResult", "InferStats", "log_infer_stats",
     # 配置

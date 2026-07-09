@@ -41,6 +41,7 @@ class PipelineConfig:
 
     # ---- 帧源 ----
     camera_raw: dict[str, Any] = field(default_factory=dict)   # 原始 camera 子字典, 延迟构造 CameraConfig
+    frame_stride: int = 1  # 帧间隔: 每 N 帧取 1 帧 (1=不跳帧)
 
     # ---- 美化 ----
     viz_enabled: bool = True
@@ -100,6 +101,7 @@ def load_pipeline_config(yaml_path: str | Path | None) -> PipelineConfig:
     # ---- 帧源 ----
     fs = raw.get("frame_source", {}) or {}
     pc.camera_raw = fs.get("camera", {}) or {}
+    pc.frame_stride = max(1, int(fs.get("stride", 1)))
 
     # ---- 美化 ----
     vz = raw.get("visualization", {}) or {}
