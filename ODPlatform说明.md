@@ -69,6 +69,14 @@ odp-init
 
 创建 `data/`、`models/`、`runs/`、`configs/`、`logging/` 等全部骨架目录。
 
+### 路径诊断
+
+```bash
+odp-paths
+```
+
+用于打印当前工作区根目录、运行时关键路径、初始化目标、重置目标、快照目标和受保护目录，适合快速检查工程组织规则是否符合预期。
+
 ---
 
 ## 三、D2：项目重置
@@ -79,6 +87,7 @@ odp-init
 odp-reset                # 预览（默认，安全）
 odp-reset --yes          # 交互式删除（需输入 RESET 确认）
 odp-reset --yes --force  # CI 模式（无交互）
+odp-reset --yes --backup # 删除前备份运行产物
 ```
 
 ### 删除范围
@@ -88,6 +97,17 @@ odp-reset --yes --force  # CI 模式（无交互）
 ### 保护范围（绝不会被删）
 
 `data/raw/`（原始数据）、`models/pretrained/`（预训练权重）、`.git/`、`apps/`（代码）、`scripts/`、`docs/`、`meta_logging/`
+
+### 运行产物备份与 manifest
+
+当使用 `odp-reset --yes --backup` 时，工具会先把本次将被清理的运行产物打包到 `.odp-meta/backups/`，并同步生成同名 `.json` manifest，记录：
+
+- 归档工具名
+- 归档标签
+- 生成时间
+- 备份目标列表
+- 目录数 / 文件数
+- zip 路径
 
 ---
 
@@ -188,9 +208,53 @@ odp-validate --dataset VOC_SHWD --check-images     # 开图像解码检查
 odp-gen-config train    # 生成训练配置模板
 odp-gen-config val      # 生成验证配置模板
 odp-gen-config infer    # 生成推理配置模板
+odp-gen-config train --dry-run         # 仅预览，不写文件
+odp-gen-config train --name train_demo # 自定义输出文件名
 ```
 
 生成的文件在 `configs/runtime/` 下，每个字段自带中文注释、示例值、提示。
+
+### 运行配置增强
+
+| 参数 | 说明 |
+|------|------|
+| `--dry-run` | 仅预览生成结果，不写入文件 |
+| `--name` | 自定义输出文件名，仍写入 `configs/runtime/` |
+| `--output` | 自定义完整输出路径 |
+
+示例：
+
+```bash
+odp-gen-config train --dry-run
+odp-gen-config train --name train_demo
+odp-gen-config infer --name infer_demo
+```
+
+---
+
+## 六点五：项目快照
+
+```bash
+odp-snapshot
+odp-backup
+odp-snapshot --list
+odp-snapshot --include src scripts
+odp-snapshot --exclude docs
+```
+
+### 作用
+
+- 对项目核心文件做 zip 快照
+- 默认目标包括：`apps/platform/src/`、`docs/`、`scripts/`、`pyproject.toml`、`apps/platform/pyproject.toml`、`setup.py`
+- 同步生成同名 manifest，记录快照目标和文件统计信息
+
+### 可选化参数
+
+| 参数 | 说明 |
+|------|------|
+| `--list` | 列出当前可选的快照目标名 |
+| `--include` | 只打包指定目标，例如 `src scripts` |
+| `--exclude` | 从默认目标中排除指定目标，例如 `docs` |
 
 ---
 
@@ -282,6 +346,7 @@ pip install -e apps/platform
 
 # 1. D1: 初始化
 odp-init
+odp-paths
 
 # 2. 放置数据到 data/raw/VOC_SHWD/{images/, annotations/}
 
@@ -293,6 +358,7 @@ odp-validate --dataset VOC_SHWD
 
 # 5. D5: 生成训练配置
 odp-gen-config train
+odp-gen-config train --dry-run
 
 # 6. D6: 训练
 odp-train --data VOC_SHWD --model yolo11n.pt --epochs 100
@@ -305,6 +371,9 @@ odp-infer --source 0 --model train-xxx-best.pt --show
 
 # 9. 重置（下一轮实验）
 odp-reset --yes --force
+
+# 10. 项目快照（可选）
+odp-snapshot
 ```
 
 ---
@@ -314,7 +383,10 @@ odp-reset --yes --force
 | 命令 | 功能 | 阶段 |
 |------|------|------|
 | `odp-init` | 项目初始化 | D1 |
+| `odp-paths` | 路径诊断 | D1 |
 | `odp-reset` | 安全清理 | D2 |
+| `odp-snapshot` | 项目核心文件快照 | D2+ |
+| `odp-backup` | 项目快照别名 | D2+ |
 | `odp-transform` | 数据转换 | D3 |
 | `odp-validate` | 数据质检 | D4 |
 | `odp-gen-config` | 生成配置模板 | D5 |

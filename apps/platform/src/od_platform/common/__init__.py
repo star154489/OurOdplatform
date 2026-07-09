@@ -21,6 +21,9 @@ from od_platform.common.paths import (
     META_LOGGING_DIR as META_LOGGING_DIR,
     get_dirs_to_reset as get_dirs_to_reset,
     get_dirs_to_initialize as get_dirs_to_initialize,
+    get_runtime_backup_targets as get_runtime_backup_targets,
+    get_project_core_backup_target_map as get_project_core_backup_target_map,
+    get_project_core_backup_targets as get_project_core_backup_targets,
     is_protected as is_protected,
     dataset_processed_dir as dataset_processed_dir,
     dataset_yaml_path as dataset_yaml_path,
@@ -28,6 +31,10 @@ from od_platform.common.paths import (
 
 # 审计上下文
 from od_platform.common.audit_utils import _audit_context as _audit_context
+from od_platform.common.archive_utils import (
+    build_archive_name as build_archive_name,
+    create_zip_archive as create_zip_archive,
+)
 
 # 注册表工具
 from od_platform.common.registry_utils import import_submodules as import_submodules
@@ -52,9 +59,14 @@ __all__ = [
     "META_LOGGING_DIR",
     "get_dirs_to_initialize",
     "get_dirs_to_reset",
+    "get_runtime_backup_targets",
+    "get_project_core_backup_target_map",
+    "get_project_core_backup_targets",
     "is_protected",
     "dataset_processed_dir",
     "dataset_yaml_path",
     "_audit_context",
+    "build_archive_name",
+    "create_zip_archive",
     "import_submodules",
 ]

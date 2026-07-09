@@ -44,6 +44,29 @@ def test_get_dirs_to_reset():
     assert len(get_dirs_to_reset()) >= 4
 
 
+def test_get_backup_targets():
+    from od_platform.common.paths import (
+        APP_DIR,
+        DOCS_DIR,
+        PROCESSED_DATA_DIR,
+        RUNS_DIR,
+        SCRIPTS_DIR,
+        TRAINED_MODELS_DIR,
+        get_project_core_backup_targets,
+        get_runtime_backup_targets,
+    )
+
+    runtime_targets = get_runtime_backup_targets()
+    assert PROCESSED_DATA_DIR in runtime_targets
+    assert RUNS_DIR in runtime_targets
+    assert TRAINED_MODELS_DIR in runtime_targets
+
+    core_targets = get_project_core_backup_targets()
+    assert APP_DIR / "src" in core_targets
+    assert DOCS_DIR in core_targets
+    assert SCRIPTS_DIR in core_targets
+
+
 def test_dataset_processed_dir():
     from od_platform.common.paths import dataset_processed_dir, PROCESSED_DATA_DIR
     assert dataset_processed_dir("demo") == PROCESSED_DATA_DIR / "demo"
@@ -67,15 +90,11 @@ class TestIsProtected:
 
     def test_git_subpath_is_protected(self):
         from od_platform.common.paths import is_protected
-        # 当前实现: protected dir subpath check 的判定逻辑定向相反
-        result = is_protected(self.ROOT / ".git" / "objects")
-        print(f"is_protected(.git/objects) = {result}")
-        # 根据当前实现接受 True 或 False
+        assert is_protected(self.ROOT / ".git" / "objects") is True
 
     def test_raw_data_subpath_is_protected(self):
         from od_platform.common.paths import is_protected
-        result = is_protected(self.ROOT / "data" / "raw" / "something")
-        print(f"is_protected(data/raw/something) = {result}")
+        assert is_protected(self.ROOT / "data" / "raw" / "something") is True
 
     def test_runs_is_not_protected(self):
         from od_platform.common.paths import is_protected
@@ -90,3 +109,12 @@ class TestIsProtected:
         from od_platform.common.paths import get_dirs_to_reset, is_protected
         for d in get_dirs_to_reset():
             assert is_protected(d) is False, f"{d} should not be protected"
+
+    def test_reset_targets_do_not_enclose_protected_dirs(self):
+        from od_platform.common.paths import PROTECTED_DIRS, get_dirs_to_reset
+
+        for reset_dir in get_dirs_to_reset():
+            for protected_dir in PROTECTED_DIRS:
+                assert not protected_dir.resolve(strict=False).is_relative_to(
+                    reset_dir.resolve(strict=False)
+                ), f"{reset_dir} should not enclose protected dir {protected_dir}"

@@ -38,13 +38,16 @@ from pathlib import Path
 from typing import List, Tuple
 
 from od_platform.common.audit_utils import _audit_context
+from od_platform.common.archive_utils import create_zip_archive
 from od_platform.common.logging_utils import get_logger
 from od_platform.common.paths import (
+    META_DIR,
     META_LOGGING_DIR,
     PRETRAINED_MODELS_DIR,
     RAW_DATA_DIR,
     ROOT_DIR,
     get_dirs_to_reset,
+    get_runtime_backup_targets,
     is_protected,
 )
 from od_platform.common.string_utils import format_table_row, format_table_separator
@@ -55,6 +58,8 @@ from od_platform.common.string_utils import format_table_row, format_table_separ
 CONFIRM_KEYWORD = "RESET"
 LINE_WIDTH = 70
 LARGE_DIR_THRESHOLD = 1 * 1024 ** 3  # 1 GiB
+BACKUP_DIR = META_DIR / "backups"
+RUNTIME_BACKUP_LABEL = "runtime-artifacts"
 
 # 日志类型
 _LOG_TYPE = "reset_project"
@@ -312,12 +317,36 @@ def _print_summary(
         logger.info(f"完成: 成功 {success_count} 个, 失败 0 个")
 
 
+def _create_backup_archive(
+    logger: logging.Logger,
+    targets: List[Path],
+    *,
+    label: str,
+    backup_dir: Path = BACKUP_DIR,
+) -> Path | None:
+    """把即将被删除的目录打包成 zip 备份。"""
+    return create_zip_archive(
+        logger,
+        root_dir=ROOT_DIR,
+        targets=targets,
+        backup_dir=backup_dir,
+        label=label,
+        tool_name="odp-reset",
+    )
+
+
 # ---------------------------------------------------------------------------
 # 核心业务函数
 # ---------------------------------------------------------------------------
 
 
-def reset_project(yes: bool = False, force: bool = False, dry_run: bool = False) -> int:
+def reset_project(
+    yes: bool = False,
+    force: bool = False,
+    dry_run: bool = False,
+    *,
+    backup: bool = False,
+) -> int:
     """项目重置业务函数（FR-CLI-002）。
 
     作为纯函数设计——所有参数显式传入，不读取 sys.argv / 环境变量，
@@ -327,6 +356,7 @@ def reset_project(yes: bool = False, force: bool = False, dry_run: bool = False)
         yes:     是否真正执行删除（默认仅 dry-run）。对应 ``--yes``。
         force:   是否跳过交互式确认（仅当 ``yes=True`` 时有效）。对应 ``--force``。
         dry_run: 显式声明 dry-run；与 ``yes`` 互斥时优先。对应 ``--dry-run``。
+        backup:  是否在删除前将运行产物打包备份。对应 ``--backup``。
 
     Returns:
         int: 退出码（FR-CLI-007）
@@ -378,28 +408,47 @@ def reset_project(yes: bool = False, force: bool = False, dry_run: bool = False)
     # ── 7. 输出删除计划（FR-CLI-004）────────────────────────────
     _print_plan(logger, targets, missing, will_actually_delete=yes)
 
-    # ── 8. 没有可删除内容 → 直接结束 ────────────────────────────
-    if not targets:
-        return 0
-
-    # ── 9. 决策分支（FR-SAFE-001 / FR-SAFE-003 / FR-SAFE-004）───
+    # ── 8. dry-run 直接结束；真实执行继续看确认 / 备份 ───────────
     if not yes:
         return 0
 
-    if not force:
+    # ── 9. 交互确认（仅在确有删除目标时触发）────────────────────
+    if targets and not force:
         if not _confirm(len(targets)):
             logger.warning("❌ 用户取消，未执行删除")
             return 0  # 用户取消 → 退出码 0
 
-    # ── 10. 执行删除（FR-CLI-005）─────────────────────────────────
+    backup_paths: List[Path] = []
+    if backup:
+        logger.info("")
+        logger.info("开始打包运行产物...".center(LINE_WIDTH, "="))
+        runtime_backup_path = _create_backup_archive(
+            logger,
+            get_runtime_backup_targets(),
+            label=RUNTIME_BACKUP_LABEL,
+        )
+        if runtime_backup_path is None:
+            logger.error("启用了 --backup 但运行产物备份失败，已中止删除")
+            return 2
+        backup_paths.append(runtime_backup_path)
+        logger.info("运行产物备份完成: %s", runtime_backup_path)
+
+    if backup_paths:
+        logger.info("本次生成备份包 %d 个", len(backup_paths))
+
+    # ── 10. 没有可删除内容 → 备份后直接结束 ──────────────────────
+    if not targets:
+        return 0
+
+    # ── 11. 执行删除（FR-CLI-005）─────────────────────────────────
     logger.info("")
     logger.info("开始删除...".center(LINE_WIDTH, "="))
     success_count, failures = _execute_delete(logger, targets)
 
-    # ── 11. 输出汇总（FR-CLI-006）────────────────────────────────
+    # ── 12. 输出汇总（FR-CLI-006）────────────────────────────────
     _print_summary(logger, success_count, failures)
 
-    # ── 12. 返回退出码（FR-CLI-007）─────────────────────────────
+    # ── 13. 返回退出码（FR-CLI-007）─────────────────────────────
     if not failures:
         return 0
     elif success_count == 0:
@@ -424,6 +473,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "示例:\n"
             "  odp-reset                  # dry-run，预览将删除的内容\n"
             "  odp-reset --yes            # 预览后交互式确认删除\n"
+            "  odp-reset --yes --backup   # 删除前备份运行产物\n"
             "  odp-reset --yes --force    # 无交互删除（CI 友好）\n"
             "  odp-reset --dry-run        # 显式 dry-run\n\n"
             "安全说明:\n"
@@ -447,6 +497,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="显式声明 dry-run（默认行为也是 dry-run，但显式更可读）",
+    )
+    parser.add_argument(
+        "--backup",
+        action="store_true",
+        help="删除前把运行产物打包备份到 .odp-meta/backups/",
     )
     return parser
 
@@ -472,6 +527,7 @@ def main(argv: list[str] | None = None) -> int:
         yes=args.yes,
         force=effective_force,
         dry_run=args.dry_run,
+        backup=args.backup,
     )
 
 

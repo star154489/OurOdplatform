@@ -46,7 +46,10 @@ dev = [
 
 [project.scripts]
 odp-init       = "od_platform.cli.init_project:main"
+odp-paths      = "od_platform.cli.show_paths:main"
 odp-reset      = "od_platform.cli.reset_project:main"
+odp-snapshot   = "od_platform.cli.snapshot_project:main"
+odp-backup     = "od_platform.cli.snapshot_project:main"
 odp-transform  = "od_platform.cli.transform_data:main"
 odp-validate   = "od_platform.cli.validate_data:main"
 odp-gen-config = "od_platform.runtime_config.generator:main"
