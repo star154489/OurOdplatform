@@ -68,6 +68,8 @@ def _build_parser() -> argparse.ArgumentParser:
     # ---- 其他 ----
     p.add_argument("--warmup", type=int, default=0,
                    help="启动丢弃前 N 帧 (摄像头帧率不稳).")
+    p.add_argument("--stride", type=int, default=None,
+                   help="帧间隔: 每 N 帧取 1 帧 (默认 1 = 不跳帧). 覆盖 infer_pipeline.yaml.")
     p.add_argument("--log-level", type=str, default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                    help="日志级别.")
@@ -105,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         beautify=(not ns.no_viz),
         show_info=(not ns.no_hud),
         warmup_frames=ns.warmup,
+        stride=ns.stride,
         # ★ 不传 output_sink / hooks / cancel_token → service 走默认 → 等价老式 CLI
     )
 

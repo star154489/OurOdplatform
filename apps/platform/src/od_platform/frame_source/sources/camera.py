@@ -16,10 +16,17 @@ from ..core.types import (
     FrameInfo,
     SourceType,
 )
+from ..registry import register_source
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["CameraSource"]
+
+
+@register_source("camera", description="RGB / webcam live capture")
+def _create_camera(source: str, config=None, **_kw):
+    cfg = config or CameraConfig(camera_id=int(source))
+    return CameraSource(cfg)
 
 # ---------------------------------------------------------------------------
 # Environment variable for MSMF on Windows

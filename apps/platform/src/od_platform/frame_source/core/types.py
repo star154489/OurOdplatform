@@ -68,6 +68,8 @@ class SourceType(str, enum.Enum):
     """Identifies the type of frame source."""
 
     CAMERA = "camera"
+    DEPTH_CAMERA = "depth_camera"
+    IR_CAMERA = "ir_camera"
     VIDEO = "video"
     IMAGE = "image"
     IMAGE_FOLDER = "image_folder"

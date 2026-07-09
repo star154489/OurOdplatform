@@ -18,6 +18,7 @@ from ..core.types import (
     FrameInfo,
     SourceType,
 )
+from ..registry import register_source
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,16 @@ __all__ = [
     "ImageSource",
     "ImageFolderSource",
 ]
+
+
+@register_source("image", description="Single image file")
+def _create_image(source: str, config=None, **_kw):
+    return ImageSource(source)
+
+
+@register_source("image_folder", description="Directory of image files")
+def _create_image_folder(source: str, config=None, **_kw):
+    return ImageFolderSource(source)
 
 
 class ImageSource(FrameSource):
