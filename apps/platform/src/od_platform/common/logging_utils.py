@@ -11,6 +11,7 @@
 #               之后所有 getLogger(__name__) 通过冒泡机制自动继承
 
 import logging
+import re
 import sys
 import platform
 from datetime import datetime
@@ -22,6 +23,20 @@ from colorlog import ColoredFormatter
 # 项目根 logger 名 = 顶层 Python 包名
 # 业务模块写 getLogger("od_platform.xxx.yyy") 会通过冒泡找到这里挂的 handler
 ROOT_LOGGER_NAME: str = "od_platform"
+
+# ============================================================
+# 日志文件名里的时间戳 —— 单一真相源
+# 生成(本模块)和解析(log_rename)共用, 避免两处格式漂移导致改名提取失败。
+# 格式: 20260708-143025-123456 (年月日-时分秒-微秒)
+# ============================================================
+LOG_TIMESTAMP_FMT: str = "%Y%m%d-%H%M%S-%f"
+# 对应 LOG_TIMESTAMP_FMT 的解析正则; 微秒段可选(容忍历史/外部命名)
+LOG_TIMESTAMP_RE = re.compile(r"\d{8}-\d{6}(?:-\d{1,6})?")
+
+
+def make_log_timestamp() -> str:
+    """生成日志文件名用的时间戳字符串(与 LOG_TIMESTAMP_RE 保证可被反解析)。"""
+    return datetime.now().strftime(LOG_TIMESTAMP_FMT)
 
 
 def get_logger(
@@ -65,7 +80,7 @@ def get_logger(
     # ============================================================
     # 3. 构造日志文件名: <prefix>_<timestamp>[_<model>].log
     # ============================================================
-    timestamp: str = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:21]
+    timestamp: str = make_log_timestamp()
     prefix = "temp" if temp_log else log_type.replace("_", "-")
 
     filename_parts = [prefix, timestamp]

@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
+from od_platform.common.registry_utils import handle_duplicate_registration
 from od_platform.data_pipeline.split.manifest import PairList, SplitManifest
 
 logger = logging.getLogger(__name__)
@@ -45,8 +46,14 @@ _STRATEGY_REGISTRY: Dict[str, StrategyEntry] = {}
 def register_strategy(name: str, *, requires_labels: bool = False):
     """装饰器:把被装饰的函数登记进策略注册表。"""
     def decorator(func: StrategyFunc) -> StrategyFunc:
-        if name in _STRATEGY_REGISTRY:
-            logger.warning("策略 %s 被重复注册,后者覆盖前者", name)
+        handle_duplicate_registration(
+            name,
+            already_exists=name in _STRATEGY_REGISTRY,
+            label="策略",
+            policy="warn",                # split: 重复=后者覆盖前者(允许覆盖)
+            where=f"{func.__module__}.{func.__name__}",
+            logger=logger,
+        )
         _STRATEGY_REGISTRY[name] = StrategyEntry(func=func, requires_labels=requires_labels)
         return func
     return decorator

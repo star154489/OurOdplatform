@@ -37,7 +37,10 @@ from od_platform.common.archive_utils import (
 )
 
 # 注册表工具
-from od_platform.common.registry_utils import import_submodules as import_submodules
+from od_platform.common.registry_utils import (
+    import_submodules as import_submodules,
+    handle_duplicate_registration as handle_duplicate_registration,
+)
 
 __all__ = [
     "ROOT_DIR",
@@ -69,4 +72,5 @@ __all__ = [
     "build_archive_name",
     "create_zip_archive",
     "import_submodules",
+    "handle_duplicate_registration",
 ]

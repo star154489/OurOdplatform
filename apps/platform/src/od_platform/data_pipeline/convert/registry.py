@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
+from od_platform.common.registry_utils import handle_duplicate_registration
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,8 +59,14 @@ def register(format_name: str, *, supported_tasks: Tuple[str, ...]):
     它在【该文件被 import 的那一刻】执行。
     """
     def decorator(func: ConverterFunc) -> ConverterFunc:
-        if format_name in _REGISTRY:
-            logger.warning("格式 %s 被重复注册,后者覆盖前者", format_name)
+        handle_duplicate_registration(
+            format_name,
+            already_exists=format_name in _REGISTRY,
+            label="格式",
+            policy="warn",                # convert: 重复=后者覆盖前者(允许覆盖)
+            where=f"{func.__module__}.{func.__name__}",
+            logger=logger,
+        )
         _REGISTRY[format_name] = ConverterEntry(func=func, supported_tasks=tuple(supported_tasks))
         return func                       # 函数原样还回去,本身不变
     return decorator

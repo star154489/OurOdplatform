@@ -95,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         base_path=Path("logs"),
         log_type="infer",
         log_level=getattr(logging, ns.log_level),
+        temp_log=True,  # 先写临时名, 推理拿到 output_dir 后由 rename_log_to_save_dir 归档
     )
 
     cli_args = _ns_to_cli_args(ns)
