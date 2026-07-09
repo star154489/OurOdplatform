@@ -144,7 +144,7 @@ configs/datasets/VOC_SHWD.yaml  ← 供 ultralytics 和 D4/D6/D7 使用
 odp-validate --dataset VOC_SHWD
 ```
 
-### 14 项检查
+### 19 项检查
 
 | # | 检查项 | 检测内容 |
 |---|--------|---------|
@@ -162,6 +162,11 @@ odp-validate --dataset VOC_SHWD
 | ⑫ | class_presence | 类别出现性 |
 | ⑬ | class_balance | 类别失衡 |
 | ⑭ | image_integrity | 图像完整性（可选） |
+| ⑮ | empty_or_tiny_files | 空文件/异常小文件 |
+| ⑯ | label_density_outliers | 单图目标数离群 |
+| ⑰ | bbox_size_outliers | 极小/极大目标框 |
+| ⑱ | image_resolution_outliers | 分辨率/宽高比异常 |
+| ⑲ | phash_duplicates | Phash 重复/近重复图像（可选重型） |
 
 ### 退出码
 
@@ -175,9 +180,14 @@ odp-validate --dataset VOC_SHWD
 ### 常用参数
 
 ```bash
-odp-validate --dataset VOC_SHWD                   # 完整验证
-odp-validate --dataset VOC_SHWD --no-profile       # 快速（跳过画像）
-odp-validate --dataset VOC_SHWD --check-images     # 开图像解码检查
+odp-validate --dataset VOC_SHWD                         # 完整验证，生成 Markdown 报告和 issues_detailed.csv
+odp-validate --dataset VOC_SHWD --no-profile             # 快速（跳过画像）
+odp-validate --dataset VOC_SHWD --check-images           # 开图像解码检查
+odp-validate --dataset VOC_SHWD --report-format html     # 生成 HTML 质检报告
+odp-validate --dataset VOC_SHWD --report-format word     # 生成 Word 质检报告
+odp-validate --dataset VOC_SHWD --report-format all      # 同时生成 Markdown/HTML/Word 报告
+odp-validate --dataset VOC_SHWD --enable-phash           # 启用重型 Phash 重复/近重复检测
+odp-validate --dataset VOC_SHWD --enable-phash --phash-max-images 1000  # Phash 抽检前 1000 张
 ```
 
 ---

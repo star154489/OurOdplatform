@@ -20,6 +20,7 @@ from pathlib import Path
 from od_platform.common.constants import Task
 from od_platform.common.logging_utils import get_logger
 from od_platform.common.paths import LOGGING_DIR, DATASET_CONFIGS_DIR
+from od_platform.data_validation.extended_validation import write_extended_validation_artifacts
 from od_platform.data_validation.registry import ValidationOptions
 from od_platform.data_validation.render import render_to_logger
 from od_platform.data_validation.service import validate_dataset
@@ -64,6 +65,34 @@ def _build_parser() -> argparse.ArgumentParser:
         help="跳过实例画像与 instances.csv 生成 (超大数据集快速过闸用)",
     )
     parser.add_argument(
+        "--report-format",
+        choices=("md", "html", "word", "all"),
+        default="md",
+        help="质检报告格式: md/html/word/all，默认 md",
+    )
+    parser.add_argument(
+        "--enable-phash",
+        action="store_true",
+        help="启用重型 Phash 近重复图像检测",
+    )
+    parser.add_argument(
+        "--phash-threshold",
+        type=int,
+        default=5,
+        help="Phash 汉明距离阈值，越小越严格",
+    )
+    parser.add_argument(
+        "--phash-max-images",
+        type=int,
+        default=None,
+        help="限制 Phash 最大扫描图像数，便于大数据集抽检",
+    )
+    parser.add_argument(
+        "--no-csv",
+        action="store_true",
+        help="不生成问题数据 CSV 明细",
+    )
+    parser.add_argument(
         "--no-image-headers",
         action="store_true",
         help="画像层不读图像头 (放弃分辨率/像素口径字段, 进一步省 I/O)",
@@ -91,6 +120,12 @@ def _resolve_yaml(ref: str) -> Path:
     if candidate.exists():
         return candidate.resolve()
     return p.resolve()
+
+
+def _resolve_report_formats(report_format: str) -> tuple[str, ...]:
+    if report_format == "all":
+        return ("md", "html", "word")
+    return (report_format,)
 
 
 def main(argv: list | None = None) -> int:
@@ -136,6 +171,29 @@ def main(argv: list | None = None) -> int:
 
         if report.markdown_path and report.markdown_path.exists():
             logger.info(f"  Markdown 报告:  {report.markdown_path}")
+
+        if not args.no_report and report.run_dir is not None:
+            artifacts = write_extended_validation_artifacts(
+                report,
+                enable_phash=args.enable_phash,
+                phash_threshold=args.phash_threshold,
+                phash_max_images=args.phash_max_images,
+                report_formats=_resolve_report_formats(args.report_format),
+                write_csv=not args.no_csv,
+            )
+            if not args.no_csv:
+                logger.info(f"  问题CSV明细: {artifacts.issues_csv}")
+            logger.info(f"  扩展质检摘要: {artifacts.extended_json}")
+            if artifacts.html_report:
+                logger.info(f"  HTML 报告:    {artifacts.html_report}")
+            if artifacts.word_report:
+                logger.info(f"  Word 报告:    {artifacts.word_report}")
+
+            has_extended_error = any(check.severity == "ERROR" for check in artifacts.checks)
+            if has_extended_error and report.exit_code < 2:
+                return 2
+            if artifacts.issue_count > 0 and report.exit_code == 0:
+                return 1
 
         return report.exit_code
 
