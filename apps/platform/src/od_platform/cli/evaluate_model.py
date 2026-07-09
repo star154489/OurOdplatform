@@ -35,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
         base_path=LOGGING_DIR,
         log_type="val",
         log_level=logging.DEBUG if args.verbose else logging.INFO,
+        temp_log=True,  # 先写临时名, 评估拿到 save_dir 后由 rename_log_to_save_dir 归档
         logger_name="od_platform.cli.evaluate_model",
     )
 
