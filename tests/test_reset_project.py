@@ -32,6 +32,7 @@ def test_create_backup_archive(tmp_path, monkeypatch):
     archive = rp._create_backup_archive(
         logger,
         [processed_dir, runs_dir],
+        label="runtime-artifacts",
         backup_dir=repo_root / ".odp-meta" / "backups",
     )
 
@@ -57,7 +58,11 @@ def test_reset_project_aborts_when_backup_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(rp, "PRETRAINED_MODELS_DIR", repo_root / "models" / "pretrained")
     monkeypatch.setattr(rp, "get_dirs_to_reset", lambda: [processed_dir])
     monkeypatch.setattr(rp, "_scan_target_dirs", lambda logger: ([(processed_dir, 1, 5)], []))
-    monkeypatch.setattr(rp, "_create_backup_archive", lambda logger, targets, backup_dir=rp.BACKUP_DIR: None)
+    monkeypatch.setattr(
+        rp,
+        "_create_backup_archive",
+        lambda logger, targets, label, backup_dir=rp.BACKUP_DIR: None,
+    )
 
     called = {"delete": False}
 
@@ -88,14 +93,15 @@ def test_reset_project_keeps_backup_when_interrupted_after_backup(tmp_path, monk
     (processed_dir / "sample.txt").write_text("hello", encoding="utf-8")
 
     backup_dir = repo_root / ".odp-meta" / "backups"
-    archive_path = backup_dir / "reset-backup-20260709-000000.zip"
+    archive_path = backup_dir / "runtime-artifacts-backup-20260709-000000.zip"
 
     monkeypatch.setattr(rp, "ROOT_DIR", repo_root)
     monkeypatch.setattr(rp, "RAW_DATA_DIR", repo_root / "data" / "raw")
     monkeypatch.setattr(rp, "PRETRAINED_MODELS_DIR", repo_root / "models" / "pretrained")
     monkeypatch.setattr(rp, "get_dirs_to_reset", lambda: [processed_dir])
     monkeypatch.setattr(rp, "_scan_target_dirs", lambda logger: ([(processed_dir, 1, 5)], []))
-    def fake_backup(logger, targets, backup_dir=rp.BACKUP_DIR):
+    def fake_backup(logger, targets, label, backup_dir=rp.BACKUP_DIR):
+        assert label == "runtime-artifacts"
         backup_dir.mkdir(parents=True, exist_ok=True)
         archive_path.parent.mkdir(parents=True, exist_ok=True)
         archive_path.write_bytes(b"zip")

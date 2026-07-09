@@ -44,6 +44,29 @@ def test_get_dirs_to_reset():
     assert len(get_dirs_to_reset()) >= 4
 
 
+def test_get_backup_targets():
+    from od_platform.common.paths import (
+        APP_DIR,
+        DOCS_DIR,
+        PROCESSED_DATA_DIR,
+        RUNS_DIR,
+        SCRIPTS_DIR,
+        TRAINED_MODELS_DIR,
+        get_project_core_backup_targets,
+        get_runtime_backup_targets,
+    )
+
+    runtime_targets = get_runtime_backup_targets()
+    assert PROCESSED_DATA_DIR in runtime_targets
+    assert RUNS_DIR in runtime_targets
+    assert TRAINED_MODELS_DIR in runtime_targets
+
+    core_targets = get_project_core_backup_targets()
+    assert APP_DIR / "src" in core_targets
+    assert DOCS_DIR in core_targets
+    assert SCRIPTS_DIR in core_targets
+
+
 def test_dataset_processed_dir():
     from od_platform.common.paths import dataset_processed_dir, PROCESSED_DATA_DIR
     assert dataset_processed_dir("demo") == PROCESSED_DATA_DIR / "demo"

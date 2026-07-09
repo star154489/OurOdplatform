@@ -130,6 +130,24 @@ def get_dirs_to_reset() -> List[Path]:
     ]
 
 
+def get_runtime_backup_targets() -> List[Path]:
+    """返回 reset 时可选打包的运行产物目录列表。"""
+    return list(get_dirs_to_reset())
+
+
+def get_project_core_backup_targets() -> List[Path]:
+    """返回项目核心文件/目录的备份清单。"""
+    return [
+        APP_DIR / "src",
+        DOCS_DIR,
+        SCRIPTS_DIR,
+        ROOT_DIR / "pyproject.toml",
+        APP_DIR / "pyproject.toml",
+        ROOT_DIR / "setup.py",
+        ROOT_DIR / "ODPlatform说明.md",
+    ]
+
+
 # 绝对保护目录：reset 工具永远不能删除这些内容
 PROTECTED_DIRS: tuple[Path, ...] = (
     ROOT_DIR,
