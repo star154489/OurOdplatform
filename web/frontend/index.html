@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ODPlatform — 目标检测平台</title>
+<style>
+/* ══════════════════════════════════════════════════════════════
+   基础样式 — 简洁学生实训风格
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --bg: #f8fafc;
+  --card-bg: #ffffff;
+  --border: #e2e8f0;
+  --text: #1e293b;
+  --text-muted: #64748b;
+  --success: #16a34a;
+  --danger: #dc2626;
+  --warning: #f59e0b;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* ── 顶部导航 ── */
+.header {
+  background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+  color: #fff;
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.15);
+}
+.header h1 { font-size: 1.3rem; font-weight: 600; letter-spacing: .5px; }
+.header .badge {
+  background: rgba(255,255,255,.2);
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: .78rem;
+}
+.header .status {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 6px;
+  font-size: .82rem;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot.green { background: #4ade80; }
+.dot.red { background: #f87171; }
+.dot.yellow { background: #fbbf24; }
+
+/* ── 主容器 ── */
+.container { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
+
+/* ── 卡片 ── */
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+/* ── 上传区域 ── */
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 36px 20px;
+  text-align: center;
+  transition: all .2s;
+  cursor: pointer;
+  background: #fafbfc;
+}
+.upload-zone:hover, .upload-zone.drag-over {
+  border-color: var(--primary);
+  background: #eff6ff;
+}
+.upload-zone .icon { font-size: 2.8rem; margin-bottom: 8px; }
+.upload-zone .title { font-size: 1rem; font-weight: 600; margin-bottom: 4px; }
+.upload-zone .sub { font-size: .82rem; color: var(--text-muted); }
+
+/* ── 按钮行 ── */
+.btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; justify-content: center; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 18px;
+  border: none; border-radius: var(--radius);
+  font-size: .9rem; font-weight: 500; cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-outline {
+  background: #fff; color: var(--primary);
+  border: 1.5px solid var(--primary);
+}
+.btn-outline:hover { background: #eff6ff; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── 设置行 ── */
+.settings-row {
+  display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end;
+  margin-top: 16px;
+}
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: .82rem; font-weight: 500; color: var(--text-muted); }
+.field input, .field select {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: .88rem;
+  min-width: 150px;
+}
+.field input:focus, .field select:focus {
+  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+
+/* ── 文件列表 ── */
+.file-list {
+  margin-top: 12px;
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+.file-tag {
+  background: #eff6ff; color: var(--primary);
+  padding: 3px 10px; border-radius: 20px;
+  font-size: .78rem; display: flex; align-items: center; gap: 4px;
+}
+.file-tag .remove { cursor: pointer; font-weight: bold; margin-left: 2px; }
+
+/* ── 进度条 ── */
+.progress-wrap {
+  margin-top: 14px; display: none;
+}
+.progress-bar {
+  height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;
+}
+.progress-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--primary), #6366f1);
+  border-radius: 3px; transition: width .3s;
+}
+.progress-text { font-size: .78rem; color: var(--text-muted); margin-top: 4px; text-align: center; }
+
+/* ── 结果区 ── */
+.results-header {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.results-header h2 { font-size: 1.05rem; }
+.summary { font-size: .84rem; color: var(--text-muted); }
+
+/* ── 结果卡片 ── */
+.result-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+  background: #fff;
+}
+.result-grid .img-panel { text-align: center; }
+.result-grid .img-panel .label {
+  font-size: .78rem; color: var(--text-muted); margin-bottom: 6px; font-weight: 500;
+}
+.result-grid img {
+  max-width: 100%; max-height: 480px;
+  border-radius: 4px; border: 1px solid var(--border);
+  object-fit: contain;
+}
+
+.result-info {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.det-table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+.det-table th {
+  background: #f1f5f9; padding: 8px 10px; text-align: left;
+  font-weight: 600; color: var(--text-muted);
+}
+.det-table td { padding: 7px 10px; border-bottom: 1px solid #f1f5f9; }
+.det-table .conf-bar-wrap { display: flex; align-items: center; gap: 6px; }
+.conf-bar-outer { flex: 1; height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; }
+.conf-bar-inner { height: 100%; border-radius: 3px; }
+
+.hint-box {
+  margin-top: 10px; padding: 10px 14px;
+  background: #fffbeb; border-left: 3px solid var(--warning);
+  font-size: .84rem; color: #92400e; border-radius: 0 4px 4px 0;
+}
+.filename-tag {
+  font-weight: 600; font-size: .9rem; margin-bottom: 8px;
+  color: var(--primary); word-break: break-all;
+}
+
+/* ── 分页 ── */
+.pagination {
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px; margin-top: 16px;
+}
+.pagination button {
+  padding: 6px 14px; border: 1px solid var(--border);
+  background: #fff; border-radius: var(--radius);
+  cursor: pointer; font-size: .85rem;
+}
+.pagination button:hover:not(:disabled) { background: #eff6ff; }
+.pagination button:disabled { opacity: .4; cursor: default; }
+.pagination .current { font-weight: 600; padding: 0 6px; }
+
+/* ── 无结果 ── */
+.empty { text-align: center; padding: 48px 20px; color: var(--text-muted); }
+.empty .icon { font-size: 3rem; margin-bottom: 10px; }
+
+/* ── 响应式 ── */
+@media (max-width: 768px) {
+  .result-grid { grid-template-columns: 1fr; }
+  .settings-row { flex-direction: column; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════
+     顶部导航
+     ═══════════════════════════════════════════════════════════ -->
+<div class="header">
+  <h1>🔍 ODPlatform 目标检测平台</h1>
+  <span class="badge">实训版</span>
+  <div class="status" id="serverStatus">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">检测中...</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     主容器
+     ═══════════════════════════════════════════════════════════ -->
+<div class="container">
+
+  <!-- ── 上传区域 ── -->
+  <div class="card">
+    <div class="upload-zone" id="dropZone">
+      <div class="icon">📁</div>
+      <div class="title">拖拽图片到此处，或点击下方按钮选择</div>
+      <div class="sub">支持 JPG / PNG / BMP / WebP 等常见图片格式</div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btnSelectImages">
+        🖼️ 选择图片文件
+      </button>
+      <button class="btn btn-outline" id="btnSelectFolder">
+        📂 选择图片文件夹
+      </button>
+      <button class="btn btn-outline" id="btnClear" style="display:none;">
+        ✕ 清空已选
+      </button>
+    </div>
+
+    <!-- 隐藏的文件选择器 -->
+    <input type="file" id="fileInput" accept="image/*" multiple hidden>
+    <input type="file" id="folderInput" webkitdirectory hidden>
+
+    <!-- 已选文件预览标签 -->
+    <div class="file-list" id="fileList"></div>
+
+    <!-- 设置行 -->
+    <div class="settings-row">
+      <div class="field">
+        <label for="modelSelect">模型选择</label>
+        <select id="modelSelect">
+          <option value="yolo11n.pt">yolo11n.pt (默认)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="confInput">置信度阈值 (0-1)</label>
+        <input type="number" id="confInput" value="0.25" min="0" max="1" step="0.05">
+      </div>
+      <div class="field" style="flex:1; min-width:200px;">
+        <label for="hintInput">自定义提示文字</label>
+        <input type="text" id="hintInput" placeholder="可选：输入自定义提示信息...">
+      </div>
+      <button class="btn btn-primary" id="btnDetect" disabled>
+        🚀 开始识别
+      </button>
+    </div>
+
+    <!-- 进度条 -->
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-text" id="progressText">正在识别...</div>
+    </div>
+  </div>
+
+  <!-- ── 结果区 ── -->
+  <div class="card" id="resultsCard" style="display:none;">
+    <div class="results-header">
+      <h2>📋 识别结果</h2>
+      <div class="summary" id="resultsSummary"></div>
+    </div>
+    <div id="resultsContainer"></div>
+    <div class="pagination" id="pagination"></div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     JavaScript 逻辑
+     ═══════════════════════════════════════════════════════════ -->
+<script>
+(function() {
+  'use strict';
+
+  // ── 状态 ──
+  const state = {
+    files: [],            // File 对象数组
+    results: [],          // API 返回的结果数组
+    currentPage: 1,
+    pageSize: 5,          // 每页显示数量
+    detecting: false,
+  };
+
+  // ── DOM 引用 ──
+  const $ = id => document.getElementById(id);
+  const dropZone = $('dropZone');
+  const fileInput = $('fileInput');
+  const folderInput = $('folderInput');
+  const fileList = $('fileList');
+  const btnSelectImages = $('btnSelectImages');
+  const btnSelectFolder = $('btnSelectFolder');
+  const btnClear = $('btnClear');
+  const btnDetect = $('btnDetect');
+  const modelSelect = $('modelSelect');
+  const confInput = $('confInput');
+  const hintInput = $('hintInput');
+  const progressWrap = $('progressWrap');
+  const progressFill = $('progressFill');
+  const progressText = $('progressText');
+  const resultsCard = $('resultsCard');
+  const resultsSummary = $('resultsSummary');
+  const resultsContainer = $('resultsContainer');
+  const pagination = $('pagination');
+  const statusDot = $('statusDot');
+  const statusText = $('statusText');
+
+  const API = '/api';
+
+  // ── 服务状态检测 ──
+  function checkHealth() {
+    fetch(API + '/health')
+      .then(r => r.json())
+      .then(data => {
+        if (data.model_loaded) {
+          statusDot.className = 'dot green';
+          statusText.textContent = `模型已就绪 · ${data.model_name} · ${data.device}`;
+        } else {
+          statusDot.className = 'dot yellow';
+          statusText.textContent = '模型未加载，首次请求时自动加载';
+        }
+      })
+      .catch(() => {
+        statusDot.className = 'dot red';
+        statusText.textContent = '服务未连接 — 请启动后端服务';
+      });
+  }
+
+  // ── 获取可用模型列表 ──
+  function fetchModels() {
+    fetch(API + '/models')
+      .then(r => r.json())
+      .then(data => {
+        modelSelect.innerHTML = '';
+        data.models.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.name;
+          opt.textContent = `${m.name} (${m.size_mb}MB)`;
+          if (m.name === data.default) opt.selected = true;
+          modelSelect.appendChild(opt);
+        });
+      })
+      .catch(() => { /* 静默失败 */ });
+  }
+
+  // ── 更新按钮状态 ──
+  function updateButtonStates() {
+    const hasFiles = state.files.length > 0;
+    btnDetect.disabled = hasFiles === false || state.detecting;
+    btnClear.style.display = hasFiles ? '' : 'none';
+  }
+
+  // ── 渲染文件标签 ──
+  function renderFileTags() {
+    fileList.innerHTML = '';
+    state.files.forEach((f, i) => {
+      const tag = document.createElement('span');
+      tag.className = 'file-tag';
+      tag.innerHTML = `${f.name} <span class="remove" data-idx="${i}">×</span>`;
+      fileList.appendChild(tag);
+    });
+    // 点击 × 删除
+    fileList.querySelectorAll('.remove').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(el.dataset.idx);
+        state.files.splice(idx, 1);
+        renderFileTags();
+        updateButtonStates();
+      });
+    });
+    updateButtonStates();
+  }
+
+  // ── 添加文件 ──
+  function addFiles(newFiles) {
+    const imgExts = ['.jpg','.jpeg','.png','.bmp','.tiff','.tif','.webp'];
+    for (const f of newFiles) {
+      const ext = '.' + f.name.split('.').pop().toLowerCase();
+      if (imgExts.includes(ext)) {
+        // 避免重复
+        if (!state.files.some(existing => existing.name === f.name && existing.size === f.size)) {
+          state.files.push(f);
+        }
+      }
+    }
+    renderFileTags();
+  }
+
+  // ── 事件绑定 ──
+  btnSelectImages.addEventListener('click', () => fileInput.click());
+  btnSelectFolder.addEventListener('click', () => folderInput.click());
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length > 0) {
+      addFiles(Array.from(fileInput.files));
+      fileInput.value = '';
+    }
+  });
+
+  folderInput.addEventListener('change', () => {
+    if (folderInput.files.length > 0) {
+      addFiles(Array.from(folderInput.files));
+      folderInput.value = '';
+    }
+  });
+
+  btnClear.addEventListener('click', () => {
+    state.files = [];
+    state.results = [];
+    renderFileTags();
+    resultsCard.style.display = 'none';
+  });
+
+  // ── 拖拽上传 ──
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length > 0) {
+      // webkitGetAsEntry 检测是否为文件夹
+      const items = e.dataTransfer.items;
+      let allFiles = [];
+      if (items && items.length > 0) {
+        // 拖拽文件夹时 items[0].webkitGetAsEntry().isDirectory === true
+        // 但 e.dataTransfer.files 仍然包含所有文件
+        allFiles = Array.from(e.dataTransfer.files);
+      } else {
+        allFiles = Array.from(e.dataTransfer.files);
+      }
+      addFiles(allFiles);
+    }
+  });
+
+  // ── 执行推理 ──
+  btnDetect.addEventListener('click', async () => {
+    if (!state.files.length || state.detecting) return;
+
+    state.detecting = true;
+    updateButtonStates();
+    progressWrap.style.display = 'block';
+    progressFill.style.width = '0%';
+    progressText.textContent = '正在识别...';
+
+    const form = new FormData();
+    state.files.forEach(f => form.append('files', f));
+    form.append('model', modelSelect.value);
+    form.append('conf', confInput.value);
+    form.append('custom_hint', hintInput.value.trim());
+
+    try {
+      const resp = await fetch(API + '/detect', { method: 'POST', body: form });
+      const data = await resp.json();
+
+      progressFill.style.width = '100%';
+      progressText.textContent = `完成! 处理了 ${data.total} 张图片，共检测到 ${data.total_detections} 个目标`;
+
+      if (data.success) {
+        state.results = data.results;
+        state.currentPage = 1;
+        renderResults();
+      } else {
+        alert('识别失败: ' + (data.error || '未知错误'));
+      }
+    } catch (err) {
+      progressText.textContent = '请求失败: ' + err.message;
+      console.error(err);
+    } finally {
+      state.detecting = false;
+      updateButtonStates();
+      setTimeout(() => { progressWrap.style.display = 'none'; }, 3000);
+    }
+  });
+
+  // ── 渲染结果 ──
+  function renderResults() {
+    if (!state.results.length) {
+      resultsCard.style.display = 'none';
+      return;
+    }
+
+    resultsCard.style.display = '';
+
+    const total = state.results.length;
+    const totalDets = state.results.reduce((s, r) => s + (r.count || 0), 0);
+    const errorCount = state.results.filter(r => r.error).length;
+    const successCount = total - errorCount;
+
+    resultsSummary.textContent =
+      `共 ${total} 张图片 | 成功 ${successCount} 张 | 检测目标 ${totalDets} 个` +
+      (errorCount ? ` | 失败 ${errorCount} 张` : '');
+
+    // 分页
+    const totalPages = Math.ceil(total / state.pageSize);
+    if (state.currentPage > totalPages) state.currentPage = totalPages;
+    const start = (state.currentPage - 1) * state.pageSize;
+    const pageResults = state.results.slice(start, start + state.pageSize);
+
+    // 渲染每张结果
+    resultsContainer.innerHTML = '';
+    pageResults.forEach((r, idx) => {
+      const card = document.createElement('div');
+      card.className = 'result-grid';
+
+      // 文件名
+      const fnDiv = document.createElement('div');
+      fnDiv.style.cssText = 'grid-column:1/-1;';
+      fnDiv.className = 'filename-tag';
+      fnDiv.textContent = `📷 ${start + idx + 1}. ${r.filename}`;
+      if (r.error) {
+        fnDiv.textContent += ` ⚠️ 错误: ${r.error}`;
+        fnDiv.style.color = 'var(--danger)';
+      }
+      card.appendChild(fnDiv);
+
+      if (!r.error) {
+        // 原图
+        const origPanel = document.createElement('div');
+        origPanel.className = 'img-panel';
+        origPanel.innerHTML = `
+          <div class="label">📷 原图</div>
+          <img src="${r.original}" alt="原图" loading="lazy">
+        `;
+        card.appendChild(origPanel);
+
+        // 检测效果图
+        const annoPanel = document.createElement('div');
+        annoPanel.className = 'img-panel';
+        annoPanel.innerHTML = `
+          <div class="label">🎯 检测结果 (${r.count} 个目标)</div>
+          <img src="${r.annotated}" alt="检测效果图" loading="lazy">
+        `;
+        card.appendChild(annoPanel);
+
+        // 信息区
+        const infoDiv = document.createElement('div');
+        infoDiv.className = 'result-info';
+
+        if (r.detections && r.detections.length > 0) {
+          let tableHtml = `<table class="det-table">
+            <thead><tr><th>#</th><th>类别</th><th>置信度</th><th>检测框 (x1,y1,x2,y2)</th></tr></thead><tbody>`;
+          r.detections.forEach((d, i) => {
+            const pct = Math.round(d.confidence * 100);
+            const barColor = pct >= 70 ? 'var(--success)' : pct >= 40 ? 'var(--warning)' : 'var(--danger)';
+            tableHtml += `<tr>
+              <td>${i + 1}</td>
+              <td><strong>${d.label}</strong></td>
+              <td>
+                <div class="conf-bar-wrap">
+                  <span>${pct}%</span>
+                  <div class="conf-bar-outer"><div class="conf-bar-inner" style="width:${pct}%;background:${barColor};"></div></div>
+                </div>
+              </td>
+              <td><code>[${d.box.join(', ')}]</code></td>
+            </tr>`;
+          });
+          tableHtml += '</tbody></table>';
+          infoDiv.innerHTML = tableHtml;
+        } else {
+          infoDiv.innerHTML = '<p style="color:var(--text-muted);padding:8px 0;">未检测到目标对象</p>';
+        }
+
+        card.appendChild(infoDiv);
+      }
+
+      // 提示文字
+      if (r.hint) {
+        const hintDiv = document.createElement('div');
+        hintDiv.className = 'hint-box';
+        hintDiv.textContent = '💡 ' + r.hint;
+        hintDiv.style.cssText = 'grid-column:1/-1;';
+        card.appendChild(hintDiv);
+      }
+
+      resultsContainer.appendChild(card);
+    });
+
+    // 分页控件
+    renderPagination(totalPages, total);
+  }
+
+  function renderPagination(totalPages, total) {
+    if (totalPages <= 1) { pagination.innerHTML = ''; return; }
+    let html = '';
+    html += `<button ${state.currentPage <= 1 ? 'disabled' : ''} id="btnPrev">← 上一页</button>`;
+    html += `<span class="current">第 ${state.currentPage} / ${totalPages} 页</span>`;
+    html += `<button ${state.currentPage >= totalPages ? 'disabled' : ''} id="btnNext">下一页 →</button>`;
+    html += `<span style="font-size:.82rem;color:var(--text-muted);">(共 ${total} 张)</span>`;
+    pagination.innerHTML = html;
+
+    const btnPrev = pagination.querySelector('#btnPrev');
+    const btnNext = pagination.querySelector('#btnNext');
+    if (btnPrev) btnPrev.addEventListener('click', () => {
+      if (state.currentPage > 1) { state.currentPage--; renderResults(); window.scrollTo({top: resultsCard.offsetTop - 20, behavior: 'smooth'}); }
+    });
+    if (btnNext) btnNext.addEventListener('click', () => {
+      if (state.currentPage < totalPages) { state.currentPage++; renderResults(); window.scrollTo({top: resultsCard.offsetTop - 20, behavior: 'smooth'}); }
+    });
+  }
+
+  // ── 初始化 ──
+  checkHealth();
+  fetchModels();
+  updateButtonStates();
+  setInterval(checkHealth, 30000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# ODPlatform Web 接口依赖
+# 基础依赖与 od_platform 保持一致
+
+# Web 框架
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# 推理核心 (与 od_platform 共用)
+ultralytics>=8.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+torch>=2.0.0
+
+# 配置
+pydantic>=2.0
+pyyaml>=6.0
