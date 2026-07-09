@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "od-desktop"
+version = "0.1.0"
+description = "ODPlatform 桌面端 — 目标检测开发平台 GUI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+dependencies = [
+    "od-platform",
+]
+
+[project.scripts]
+odp-desktop = "od_desktop.main:main"
