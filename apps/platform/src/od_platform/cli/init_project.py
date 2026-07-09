@@ -22,14 +22,12 @@
 
 import argparse
 import logging
-import shutil
 import sys
 from pathlib import Path
 from typing import List, Tuple
 
 from od_platform.common import paths
 from od_platform.common.logging_utils import get_logger
-from od_platform.common.performance_utils import time_it
 from od_platform.common.string_utils import (
     format_table_row,
     format_table_separator,
@@ -115,7 +113,7 @@ def initialize_project() -> None:
     logger.info("=" * _LINE_WIDTH)
     logger.info("  1. 将数据集放入 data/raw/<数据集名称>/（含 images/ 与 annotations/）")
     logger.info("  2. 检查 models/pretrained/ 下是否有预训练权重")
-    logger.info("  3. 开始训练: python scripts/train.py")
+    logger.info("  3. 生成运行配置: odp-gen-config train / val / infer")
     logger.info("")
     logger.info("  日志已保存至: %s", paths.LOGGING_DIR / _LOG_TYPE)
     logger.info("=" * _LINE_WIDTH)
