@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from od_platform.common.registry_utils import handle_duplicate_registration
+
 logger = logging.getLogger(__name__)
 
 
@@ -167,10 +169,14 @@ def check(name: str):
         装饰器函数 — 注册副作用发生后, 原函数被原样返回。
     """
     def decorator(func):
-        if name in _REGISTRY:
-            raise ValueError(
-                f"check '{name}' 重复注册 — 第二次出现在 {func.__module__}.{func.__name__}"
-            )
+        handle_duplicate_registration(
+            name,
+            already_exists=name in _REGISTRY,
+            label="check",
+            policy="error",               # data_validation: 重复=bug, 立即报错
+            where=f"{func.__module__}.{func.__name__}",
+            logger=logger,
+        )
         _REGISTRY[name] = CheckEntry(name=name, func=func)
         return func
     return decorator

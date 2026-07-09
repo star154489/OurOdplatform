@@ -30,7 +30,10 @@ from od_platform.common.paths import (
 from od_platform.common.audit_utils import _audit_context as _audit_context
 
 # 注册表工具
-from od_platform.common.registry_utils import import_submodules as import_submodules
+from od_platform.common.registry_utils import (
+    import_submodules as import_submodules,
+    handle_duplicate_registration as handle_duplicate_registration,
+)
 
 __all__ = [
     "ROOT_DIR",
@@ -57,4 +60,5 @@ __all__ = [
     "dataset_yaml_path",
     "_audit_context",
     "import_submodules",
+    "handle_duplicate_registration",
 ]
