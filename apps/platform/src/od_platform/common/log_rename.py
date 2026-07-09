@@ -29,12 +29,15 @@ def _iter_od_platform_loggers() -> list[logging.Logger]:
     导致 train/val 流程改名静默失败。这里把两种情况都覆盖。
     """
     root = logging.getLogger(ROOT_LOGGER_NAME)
+    seen = {id(root)}          # 根 logger 已在列, 防止 loggerDict 里再加一遍导致重复处理
     loggers = [root]
     manager = logging.Logger.manager
     for name, obj in manager.loggerDict.items():
         if not isinstance(obj, logging.Logger):
             continue  # 跳过 PlaceHolder
-        if name == ROOT_LOGGER_NAME or name.startswith(ROOT_LOGGER_NAME + "."):
+        # 只收子 logger(od_platform.xxx); 根已在 loggers 里, 用 id 去重再保险一层
+        if name.startswith(ROOT_LOGGER_NAME + ".") and id(obj) not in seen:
+            seen.add(id(obj))
             loggers.append(obj)
     return loggers
 
@@ -42,9 +45,11 @@ def _iter_od_platform_loggers() -> list[logging.Logger]:
 def _find_file_handlers() -> list[tuple[logging.Logger, logging.FileHandler]]:
     """在所有 od_platform 相关 logger 上找 FileHandler。"""
     found: list[tuple[logging.Logger, logging.FileHandler]] = []
+    seen_handlers: set[int] = set()  # 同一 handler 若挂在多个 logger 上, 只处理一次
     for lg in _iter_od_platform_loggers():
         for h in lg.handlers:
-            if isinstance(h, logging.FileHandler):
+            if isinstance(h, logging.FileHandler) and id(h) not in seen_handlers:
+                seen_handlers.add(id(h))
                 found.append((lg, h))
     return found
 
