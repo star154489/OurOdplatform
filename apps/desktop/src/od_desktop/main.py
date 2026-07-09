@@ -448,7 +448,7 @@ class InferPage(ttk.Frame):
         ttk.Radiobutton(rm, text="图片/视频", variable=self._source_mode, value="image").pack(side=tk.LEFT)
         ttk.Radiobutton(rm, text="摄像头", variable=self._source_mode, value="camera").pack(side=tk.LEFT)
 
-        _, self._source_var = _labeled_entry(form, "输入路径:", "data/raw/demo_voc/images/", 2, width=30)
+        _, self._source_var = _labeled_entry(form, "输入路径:", "", 2, width=30)
         # 图片/视频用文件浏览，摄像头用数字输入
         self._browse_btn_frame = ttk.Frame(form)
         self._browse_btn_frame.grid(row=2, column=2, padx=(2, 0))
@@ -490,7 +490,7 @@ class InferPage(ttk.Frame):
             self._source_var.set("0")
             self._browse_btn.configure(text="浏览...", state=tk.DISABLED)
         else:
-            self._source_var.set("data/raw/demo_voc/images/")
+            self._source_var.set("")
             self._browse_btn.configure(text="浏览...", state=tk.NORMAL)
 
     def _run(self) -> None:
