@@ -3,6 +3,7 @@ from od_platform.data_pipeline.split.manifest import (
     Pair as Pair,
     PairList as PairList,
     SplitManifest as SplitManifest,
+    build_manifest as build_manifest,
 )
 from od_platform.data_pipeline.split.materializer import (
     SplitOutputDirs as SplitOutputDirs,
@@ -24,6 +25,7 @@ __all__ = [
     "Pair",
     "PairList",
     "SplitManifest",
+    "build_manifest",
     "SplitOutputDirs",
     "materialize",
     "split_pairs",

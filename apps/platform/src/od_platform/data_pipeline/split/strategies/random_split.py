@@ -5,12 +5,12 @@
 from __future__ import annotations
 
 from od_platform.common.constants import SplitStrategy
-from od_platform.data_pipeline.split._common import (
+from od_platform.data_pipeline.split.manifest import PairList, SplitManifest
+from od_platform.data_pipeline.split.strategies.common import (
     seeded_shuffled,
     three_way_counts,
     validate_rates,
 )
-from od_platform.data_pipeline.split.manifest import PairList, SplitManifest
 from od_platform.data_pipeline.split.strategy_registry import (
     SplitOptions,
     register_strategy,
@@ -24,14 +24,14 @@ def random_split(pairs: PairList, options: SplitOptions) -> SplitManifest:
     if total == 0:
         return SplitManifest(
             train_rate=options.train_rate, val_rate=options.val_rate,
-            test_rate=1.0 - options.train_rate - options.val_rate,
+            test_rate=round(1.0 - options.train_rate - options.val_rate, 4),
         )
 
-    test_rate = validate_rates(options.train_rate, options.val_rate)
-    shuffled = seeded_shuffled(pairs, options.random_state)
+    validate_rates(options.train_rate, options.val_rate)
     n_train, n_val, n_test = three_way_counts(
-        total, options.train_rate, options.val_rate, test_rate,
+        total, options.train_rate, options.val_rate,
     )
+    shuffled = seeded_shuffled(pairs, options.random_state)
 
     return SplitManifest(
         train=shuffled[:n_train],
@@ -39,5 +39,5 @@ def random_split(pairs: PairList, options: SplitOptions) -> SplitManifest:
         test=shuffled[n_train + n_val:],
         train_rate=options.train_rate,
         val_rate=options.val_rate,
-        test_rate=test_rate,
+        test_rate=round(1.0 - options.train_rate - options.val_rate, 4),
     )

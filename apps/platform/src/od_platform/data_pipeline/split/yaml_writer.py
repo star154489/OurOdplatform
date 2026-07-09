@@ -1,54 +1,89 @@
-"""生成 ultralytics 能直接吃的 dataset.yaml。"""
+"""生成 ultralytics 可直接吃的 dataset.yaml。
+
+包含 odp_meta 元数据块,可追溯数据集来源与划分参数。
+"""
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
-from od_platform.data_pipeline.split.materializer import SplitOutputDirs
+from od_platform.data_pipeline.split.manifest import SplitManifest
+
+logger = logging.getLogger(__name__)
+
+SCHEMA_VERSION = 1
 
 
 def write_dataset_yaml(
     yaml_path: Path,
-    class_names: List[str],
-    dirs: SplitOutputDirs,
+    *,
+    dataset_root: Path,
+    classes: List[str],
+    manifest: SplitManifest,
+    dataset_name: str,
+    source_format: str,
+    task: str,
+    fingerprint: str = "",
 ) -> Path:
-    """生成 dataset.yaml,返回写入的路径。
+    """生成 ultralytics 风格的 dataset.yaml。
 
     Args:
-        yaml_path: yaml 输出路径(如 configs/datasets/<name>.yaml)。
-        class_names: 类别名列表,顺序即 class_id。
-        dirs: 包含相对路径定义的 SplitOutputDirs。
+        yaml_path:      输出的 yaml 文件路径 (如 configs/datasets/safety_helmet.yaml)。
+        dataset_root:   数据落盘根目录 (yaml 里 path 字段指向它)。
+        classes:        类别名列表 (下标即 class_id)。
+        manifest:       划分清单 (用于判断 train/val/test 是否存在)。
+        dataset_name:   数据集名。
+        source_format:  来源格式 (写入 yaml 注释,方便追溯)。
+        task:           任务类型 (detect / segment)。
+        fingerprint:    数据指纹(SHA256 前 16 位),用于验证划分可复现。
 
     Returns:
         yaml_path(写入了内容)。
     """
-    rel = dirs.relative_paths()
-    # 数据根目录相对于 yaml 的路径
-    # yaml 在 configs/datasets/<name>.yaml
-    # 数据在 data/processed/<name>/train/images ...
-    # 相对关系: ../../data/processed/<name>
-    yaml_dir = yaml_path.parent.resolve()
-    data_root_rel = _relative_to(dirs.train_images.parent.parent, yaml_dir)
-
-    lines = [
-        f"# ODPlatform auto-generated dataset\n",
-        f"path: {data_root_rel.as_posix()}\n",
-        f"train: {rel['train']}\n",
-        f"val: {rel['val']}\n",
-        f"test: {rel['test']}\n",
-        f"\n",
-        f"nc: {len(class_names)}\n",
-        f"names: {class_names}\n",
-    ]
     yaml_path.parent.mkdir(parents=True, exist_ok=True)
-    yaml_path.write_text("".join(lines), encoding="utf-8")
+
+    names_str = "\n".join(f"  {i}: {name}" for i, name in enumerate(classes))
+
+    # 只写入有数据的子集
+    subsets: List[str] = []
+    if manifest.train:
+        subsets.append("train: train/images")
+    if manifest.val:
+        subsets.append("val: val/images")
+    if manifest.test:
+        subsets.append("test: test/images")
+
+    counts = manifest.counts
+
+    meta = {
+        "schema_version": SCHEMA_VERSION,
+        "dataset_name": dataset_name,
+        "source_format": source_format,
+        "fingerprint": fingerprint,
+        "train_rate": manifest.train_rate,
+        "val_rate": manifest.val_rate,
+        "test_rate": manifest.test_rate,
+        "counts": counts,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    meta_lines = "\n".join(f"#   {k}: {v}" for k, v in meta.items())
+
+    content = f"""# {dataset_name} — ultralytics 数据集配置
+# 来源格式: {source_format} | 任务: {task} | 类别数: {len(classes)}
+# 由 odp-transform 自动生成,请勿手工修改。
+#
+# odp_meta:
+{meta_lines}
+
+path: {dataset_root}
+{chr(10).join(subsets)}
+nc: {len(classes)}
+
+names:
+{names_str}
+"""
+    yaml_path.write_text(content, encoding="utf-8")
+    logger.info("yaml 已写入: %s (%d 个类别)", yaml_path, len(classes))
     return yaml_path
-
-
-def _relative_to(target: Path, base: Path) -> Path:
-    """计算 target 相对于 base 的相对路径(跨平台)。"""
-    try:
-        return target.resolve().relative_to(base.resolve())
-    except ValueError:
-        # 不在同一根下, 使用绝对路径
-        return target.resolve()

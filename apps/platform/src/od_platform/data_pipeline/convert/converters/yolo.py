@@ -25,6 +25,31 @@ from od_platform.data_pipeline.convert.registry import ConvertOptions, register
 logger = logging.getLogger(__name__)
 
 
+def _validate_yolo_txts(txt_files: list, nc: int) -> None:
+    """逐行校验 YOLO txt:字段数/class_id/坐标范围,发现问题直接抛 ValueError。"""
+    for txt in txt_files:
+        for line_no, line in enumerate(txt.read_text(encoding="utf-8").splitlines(), 1):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) != 5:
+                raise ValueError(f"{txt.name}:{line_no} 字段数={len(parts)},期望5")
+            try:
+                cls_id = int(parts[0])
+                cx, cy, w, h = float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])
+            except ValueError:
+                raise ValueError(f"{txt.name}:{line_no} 无法解析为数字: {line[:80]}")
+            if nc > 0 and not (0 <= cls_id < nc):
+                raise ValueError(
+                    f"{txt.name}:{line_no} class_id={cls_id} 越界 [0,{nc})"
+                )
+            if not (0.0 <= cx <= 1.0 and 0.0 <= cy <= 1.0 and 0.0 <= w <= 1.0 and 0.0 <= h <= 1.0):
+                raise ValueError(
+                    f"{txt.name}:{line_no} 坐标不在[0,1]: {line[:80]}"
+                )
+
+
 @register(AnnotationFormat.YOLO, supported_tasks=(Task.DETECT, Task.SEGMENT))
 def convert_yolo(input_dir: Path, output_labels_dir: Path, options: ConvertOptions) -> List[str]:
     if not options.classes:
@@ -36,6 +61,9 @@ def convert_yolo(input_dir: Path, output_labels_dir: Path, options: ConvertOptio
         raise FileNotFoundError(f"在 {input_dir} 下未找到任何 yolo txt")
 
     output_labels_dir.mkdir(parents=True, exist_ok=True)
+    # 直通前校验:字段数/class_id/坐标范围
+    nc = len(options.classes)
+    _validate_yolo_txts(txt_files, nc)
     for txt in txt_files:
         dst = output_labels_dir / txt.name
         try:                                    # 优先硬链接(零拷贝、省磁盘);跨盘会失败
