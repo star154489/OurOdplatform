@@ -35,8 +35,15 @@ class ConfigGenerator:
     def generate(self, config_class, output_path, *,
                 overwrite: bool = False,
                 backup: bool = True,
-                title: str | None = None) -> bool:
+                title: str | None = None,
+                dry_run: bool = False) -> bool:
         output_path = Path(output_path)
+        yaml_text = self._generate_yaml(config_class, title)
+
+        if dry_run:
+            logger.info("dry-run 模式: 仅预览配置，不写入文件: %s", output_path)
+            print(yaml_text)
+            return True
 
         if output_path.exists() and not overwrite:
             logger.info(f"配置文件已存在, 跳过生成: {output_path}")
@@ -49,7 +56,7 @@ class ConfigGenerator:
             logger.warning(f"覆盖前已备份原配置: {bak}")
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(self._generate_yaml(config_class, title), encoding="utf-8")
+        output_path.write_text(yaml_text, encoding="utf-8")
         logger.info(f"配置文件已生成: {output_path}")
         return True
 
@@ -108,20 +115,37 @@ class ConfigGenerator:
         return str(value)
 
 
-def main():
+def main(argv: list[str] | None = None):
     """odp-gen-config 命令入口."""
     import argparse
     parser = argparse.ArgumentParser(prog="odp-gen-config", description="生成 YOLO 运行配置 YAML 模板")
-    parser.add_argument("name", choices=list(CONFIG_REGISTRY), help="配置名 (train/val/infer)")
+    parser.add_argument("config_type", choices=list(CONFIG_REGISTRY), help="配置名 (train/val/infer)")
     parser.add_argument("-o", "--output", type=Path, default=None, help="输出路径")
+    parser.add_argument("--name", type=str, default=None, help="自定义输出文件名(不含 .yaml)")
     parser.add_argument("--overwrite", action="store_true", help="覆盖已有文件(默认不覆盖)")
     parser.add_argument("--no-backup", action="store_true", help="覆盖时不备份(默认备份)")
-    args = parser.parse_args()
+    parser.add_argument("--dry-run", action="store_true", help="仅预览生成内容，不写入文件")
+    args = parser.parse_args(argv)
 
-    config_class, title = CONFIG_REGISTRY[args.name]
-    output_path = args.output or runtime_config_path(args.name)
+    if args.output is not None and args.name is not None:
+        parser.error("--output 和 --name 不能同时使用")
+
+    config_class, title = CONFIG_REGISTRY[args.config_type]
+    if args.output is not None:
+        output_path = args.output
+    elif args.name is not None:
+        output_path = runtime_config_path(args.name)
+    else:
+        output_path = runtime_config_path(args.config_type)
+
     ok = ConfigGenerator().generate(config_class, output_path,
-                                    overwrite=args.overwrite, backup=not args.no_backup, title=title)
+                                    overwrite=args.overwrite,
+                                    backup=not args.no_backup,
+                                    title=title,
+                                    dry_run=args.dry_run)
+    if args.dry_run:
+        print(f"[DRY-RUN] 预览完成: {output_path}")
+        return
     print(f"[OK] 已生成: {output_path}" if ok else
         f"[SKIP] 文件已存在, 未覆盖. 如需重新生成加 --overwrite(会自动备份).\n  路径: {output_path}")
 

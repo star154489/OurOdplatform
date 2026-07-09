@@ -208,9 +208,27 @@ odp-validate --dataset VOC_SHWD --check-images     # 开图像解码检查
 odp-gen-config train    # 生成训练配置模板
 odp-gen-config val      # 生成验证配置模板
 odp-gen-config infer    # 生成推理配置模板
+odp-gen-config train --dry-run         # 仅预览，不写文件
+odp-gen-config train --name train_demo # 自定义输出文件名
 ```
 
 生成的文件在 `configs/runtime/` 下，每个字段自带中文注释、示例值、提示。
+
+### 运行配置增强
+
+| 参数 | 说明 |
+|------|------|
+| `--dry-run` | 仅预览生成结果，不写入文件 |
+| `--name` | 自定义输出文件名，仍写入 `configs/runtime/` |
+| `--output` | 自定义完整输出路径 |
+
+示例：
+
+```bash
+odp-gen-config train --dry-run
+odp-gen-config train --name train_demo
+odp-gen-config infer --name infer_demo
+```
 
 ---
 
@@ -340,6 +358,7 @@ odp-validate --dataset VOC_SHWD
 
 # 5. D5: 生成训练配置
 odp-gen-config train
+odp-gen-config train --dry-run
 
 # 6. D6: 训练
 odp-train --data VOC_SHWD --model yolo11n.pt --epochs 100
