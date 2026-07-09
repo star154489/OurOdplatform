@@ -6,6 +6,7 @@
 # @Project   :ODPlatform
 # @Function  :定义所有的路径变量信息，方便其他模块调用
 
+from collections import OrderedDict
 from pathlib import Path
 from typing import List, Tuple
 
@@ -135,16 +136,21 @@ def get_runtime_backup_targets() -> List[Path]:
     return list(get_dirs_to_reset())
 
 
+def get_project_core_backup_target_map() -> "OrderedDict[str, Path]":
+    """返回项目核心文件快照目标映射。"""
+    return OrderedDict([
+        ("src", APP_DIR / "src"),
+        ("docs", DOCS_DIR),
+        ("scripts", SCRIPTS_DIR),
+        ("workspace_pyproject", ROOT_DIR / "pyproject.toml"),
+        ("platform_pyproject", APP_DIR / "pyproject.toml"),
+        ("setup", ROOT_DIR / "setup.py"),
+    ])
+
+
 def get_project_core_backup_targets() -> List[Path]:
     """返回项目核心文件/目录的备份清单。"""
-    return [
-        APP_DIR / "src",
-        DOCS_DIR,
-        SCRIPTS_DIR,
-        ROOT_DIR / "pyproject.toml",
-        APP_DIR / "pyproject.toml",
-        ROOT_DIR / "setup.py",
-    ]
+    return list(get_project_core_backup_target_map().values())
 
 
 # 绝对保护目录：reset 工具永远不能删除这些内容

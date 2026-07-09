@@ -39,8 +39,15 @@ def test_snapshot_project_creates_core_archive(tmp_path, monkeypatch):
     setup_py.write_text("from setuptools import setup\n", encoding="utf-8")
     monkeypatch.setattr(
         sp,
-        "get_project_core_backup_targets",
-        lambda: [src_dir, docs_dir, scripts_dir, pyproject_path, platform_pyproject, setup_py],
+        "get_project_core_backup_target_map",
+        lambda: {
+            "src": src_dir,
+            "docs": docs_dir,
+            "scripts": scripts_dir,
+            "workspace_pyproject": pyproject_path,
+            "platform_pyproject": platform_pyproject,
+            "setup": setup_py,
+        },
     )
 
     logger = logging.getLogger("od_platform.test.snapshot_project")
@@ -80,7 +87,7 @@ def test_snapshot_project_returns_error_when_archive_fails(monkeypatch, tmp_path
 
     repo_root = tmp_path / "repo"
     monkeypatch.setattr(sp, "ROOT_DIR", repo_root)
-    monkeypatch.setattr(sp, "get_project_core_backup_targets", lambda: [repo_root / "scripts"])
+    monkeypatch.setattr(sp, "get_project_core_backup_target_map", lambda: {"scripts": repo_root / "scripts"})
 
     logger = logging.getLogger("od_platform.test.snapshot_project_fail")
     logger.handlers.clear()
@@ -91,3 +98,62 @@ def test_snapshot_project_returns_error_when_archive_fails(monkeypatch, tmp_path
     code = sp.snapshot_project()
 
     assert code == 2
+
+
+def test_resolve_targets_supports_include_and_exclude(monkeypatch):
+    from od_platform.cli import snapshot_project as sp
+
+    target_map = {
+        "src": Path("src"),
+        "docs": Path("docs"),
+        "scripts": Path("scripts"),
+    }
+    monkeypatch.setattr(sp, "get_project_core_backup_target_map", lambda: target_map)
+
+    assert sp._resolve_targets(include=["src", "scripts"]) == [Path("src"), Path("scripts")]
+    assert sp._resolve_targets(exclude=["docs"]) == [Path("src"), Path("scripts")]
+
+
+def test_resolve_targets_rejects_unknown_name(monkeypatch):
+    from od_platform.cli import snapshot_project as sp
+
+    monkeypatch.setattr(sp, "get_project_core_backup_target_map", lambda: {"src": Path("src")})
+
+    try:
+        sp._resolve_targets(include=["unknown"])
+    except ValueError as e:
+        assert "未知快照目标" in str(e)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_print_target_catalog(capsys, monkeypatch):
+    from od_platform.cli import snapshot_project as sp
+
+    monkeypatch.setattr(
+        sp,
+        "get_project_core_backup_target_map",
+        lambda: {"src": sp.ROOT_DIR / "apps" / "platform" / "src"},
+    )
+
+    sp._print_target_catalog()
+    captured = capsys.readouterr()
+
+    assert "[PROJECT CORE TARGET OPTIONS]" in captured.out
+    assert "src" in captured.out
+
+
+def test_main_supports_list(capsys, monkeypatch):
+    from od_platform.cli import snapshot_project as sp
+
+    monkeypatch.setattr(
+        sp,
+        "get_project_core_backup_target_map",
+        lambda: {"src": sp.ROOT_DIR / "apps" / "platform" / "src"},
+    )
+
+    code = sp.main(["--list"])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    assert "PROJECT CORE TARGET OPTIONS" in captured.out
