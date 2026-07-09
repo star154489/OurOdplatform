@@ -1,6 +1,7 @@
 """项目快照 CLI 测试。"""
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import zipfile
@@ -31,7 +32,16 @@ def test_snapshot_project_creates_core_archive(tmp_path, monkeypatch):
     monkeypatch.setattr(sp, "ROOT_DIR", repo_root)
     monkeypatch.setattr(sp, "META_DIR", repo_root / ".odp-meta")
     monkeypatch.setattr(sp, "BACKUP_DIR", repo_root / ".odp-meta" / "backups")
-    monkeypatch.setattr(sp, "get_project_core_backup_targets", lambda: [src_dir, docs_dir, scripts_dir, pyproject_path])
+    platform_pyproject = repo_root / "apps" / "platform" / "pyproject.toml"
+    setup_py = repo_root / "setup.py"
+    platform_pyproject.parent.mkdir(parents=True, exist_ok=True)
+    platform_pyproject.write_text("[project]\nname = 'od-platform'\n", encoding="utf-8")
+    setup_py.write_text("from setuptools import setup\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sp,
+        "get_project_core_backup_targets",
+        lambda: [src_dir, docs_dir, scripts_dir, pyproject_path, platform_pyproject, setup_py],
+    )
 
     logger = logging.getLogger("od_platform.test.snapshot_project")
     logger.handlers.clear()
@@ -50,6 +60,19 @@ def test_snapshot_project_creates_core_archive(tmp_path, monkeypatch):
         assert "docs/intro.md" in names
         assert "scripts/reset_project.py" in names
         assert "pyproject.toml" in names
+
+    manifest = json.loads(archives[0].with_suffix(".json").read_text(encoding="utf-8"))
+    assert manifest["tool_name"] == "odp-snapshot"
+    assert manifest["label"] == "project-core"
+    assert manifest["targets"] == [
+        "apps/platform/src",
+        "docs",
+        "scripts",
+        "pyproject.toml",
+        "apps/platform/pyproject.toml",
+        "setup.py",
+    ]
+    assert manifest["file_count"] == 6
 
 
 def test_snapshot_project_returns_error_when_archive_fails(monkeypatch, tmp_path):

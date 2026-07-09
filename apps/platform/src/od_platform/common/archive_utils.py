@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import zipfile
@@ -16,6 +17,53 @@ def build_archive_name(label: str) -> str:
     return f"{label}-backup-{timestamp}.zip"
 
 
+def _relative_strings(root_dir: Path, targets: Iterable[Path]) -> list[str]:
+    """把目标路径转成相对路径字符串。"""
+    items: list[str] = []
+    for target in targets:
+        try:
+            items.append(target.relative_to(root_dir).as_posix())
+        except ValueError:
+            items.append(str(target))
+    return items
+
+
+def _write_archive_manifest(
+    logger: logging.Logger,
+    *,
+    manifest_path: Path,
+    tool_name: str,
+    label: str,
+    root_dir: Path,
+    archive_path: Path,
+    targets: list[Path],
+    dir_count: int,
+    file_count: int,
+) -> Path | None:
+    """为归档包写入 manifest。"""
+    payload = {
+        "format_version": 1,
+        "tool_name": tool_name,
+        "label": label,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "root_dir": str(root_dir),
+        "archive_path": str(archive_path),
+        "targets": _relative_strings(root_dir, targets),
+        "dir_count": dir_count,
+        "file_count": file_count,
+    }
+    try:
+        manifest_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info("已生成 manifest: %s", manifest_path)
+        return manifest_path
+    except OSError as e:
+        logger.warning("写入 manifest 失败: %s", e)
+        return None
+
+
 def create_zip_archive(
     logger: logging.Logger,
     *,
@@ -23,8 +71,9 @@ def create_zip_archive(
     targets: Iterable[Path],
     backup_dir: Path,
     label: str,
+    tool_name: str,
 ) -> Path | None:
-    """把给定目标打包为 zip 归档。"""
+    """把给定目标打包为 zip 归档，并生成同名 manifest。"""
     existing_targets = [path for path in targets if path.exists()]
     if not existing_targets:
         logger.info("没有可备份的目标，跳过打包")
@@ -63,6 +112,7 @@ def create_zip_archive(
                     arcname = target.relative_to(root_dir).as_posix()
                     zf.write(target, arcname)
                     file_count += 1
+
         logger.info(
             "已打包备份[%s]: %s (目录 %d 个, 文件 %d 个)",
             label,
@@ -70,6 +120,26 @@ def create_zip_archive(
             dir_count,
             file_count,
         )
+
+        manifest_path = backup_path.with_suffix(".json")
+        if _write_archive_manifest(
+            logger,
+            manifest_path=manifest_path,
+            tool_name=tool_name,
+            label=label,
+            root_dir=root_dir,
+            archive_path=backup_path,
+            targets=existing_targets,
+            dir_count=dir_count,
+            file_count=file_count,
+        ) is None:
+            try:
+                if backup_path.exists():
+                    backup_path.unlink()
+            except OSError:
+                pass
+            return None
+
         return backup_path
     except OSError as e:
         logger.warning("创建备份包失败，跳过打包: %s", e)

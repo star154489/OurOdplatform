@@ -331,6 +331,7 @@ def _create_backup_archive(
         targets=targets,
         backup_dir=backup_dir,
         label=label,
+        tool_name="odp-reset",
     )
 
 

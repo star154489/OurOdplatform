@@ -1,6 +1,7 @@
 """D2 reset_project 备份逻辑测试。"""
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import zipfile
@@ -43,6 +44,12 @@ def test_create_backup_archive(tmp_path, monkeypatch):
         names = set(zf.namelist())
         assert "data/processed/exp1/sample.txt" in names
         assert "runs/train1/log.txt" in names
+
+    manifest = json.loads(archive.with_suffix(".json").read_text(encoding="utf-8"))
+    assert manifest["tool_name"] == "odp-reset"
+    assert manifest["label"] == "runtime-artifacts"
+    assert manifest["targets"] == ["data/processed", "runs"]
+    assert manifest["file_count"] == 2
 
 
 def test_reset_project_aborts_when_backup_fails(tmp_path, monkeypatch):

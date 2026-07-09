@@ -144,7 +144,6 @@ def get_project_core_backup_targets() -> List[Path]:
         ROOT_DIR / "pyproject.toml",
         APP_DIR / "pyproject.toml",
         ROOT_DIR / "setup.py",
-        ROOT_DIR / "ODPlatform说明.md",
     ]
 
 

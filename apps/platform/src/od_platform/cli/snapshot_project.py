@@ -54,6 +54,7 @@ def snapshot_project() -> int:
         targets=targets,
         backup_dir=BACKUP_DIR,
         label=CORE_BACKUP_LABEL,
+        tool_name="odp-snapshot",
     )
     if backup_path is None:
         logger.error("项目核心文件快照失败")
