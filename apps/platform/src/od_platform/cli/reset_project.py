@@ -34,12 +34,15 @@ import os
 import shutil
 import stat
 import sys
+import zipfile
+from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple
 
 from od_platform.common.audit_utils import _audit_context
 from od_platform.common.logging_utils import get_logger
 from od_platform.common.paths import (
+    META_DIR,
     META_LOGGING_DIR,
     PRETRAINED_MODELS_DIR,
     RAW_DATA_DIR,
@@ -55,6 +58,7 @@ from od_platform.common.string_utils import format_table_row, format_table_separ
 CONFIRM_KEYWORD = "RESET"
 LINE_WIDTH = 70
 LARGE_DIR_THRESHOLD = 1 * 1024 ** 3  # 1 GiB
+BACKUP_DIR = META_DIR / "backups"
 
 # 日志类型
 _LOG_TYPE = "reset_project"
@@ -312,12 +316,85 @@ def _print_summary(
         logger.info(f"完成: 成功 {success_count} 个, 失败 0 个")
 
 
+def _backup_name() -> str:
+    """生成 reset 备份包名。"""
+    return f"reset-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+
+
+def _create_backup_archive(
+    logger: logging.Logger,
+    targets: List[Path],
+    *,
+    backup_dir: Path = BACKUP_DIR,
+) -> Path | None:
+    """把即将被删除的目录打包成 zip 备份。"""
+    existing_targets = [p for p in targets if p.exists()]
+    if not existing_targets:
+        logger.info("没有可备份的目录，跳过打包备份")
+        return None
+
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.warning("创建备份目录失败，跳过打包备份: %s", e)
+        return None
+
+    backup_path = backup_dir / _backup_name()
+    file_count = 0
+    dir_count = 0
+
+    try:
+        with zipfile.ZipFile(
+            backup_path,
+            mode="w",
+            compression=zipfile.ZIP_DEFLATED,
+            compresslevel=6,
+        ) as zf:
+            for target in existing_targets:
+                if target.is_dir():
+                    dir_count += 1
+                    for root, dirs, files in os.walk(target):
+                        root_path = Path(root)
+                        rel_root = root_path.relative_to(ROOT_DIR)
+                        zf.writestr(f"{rel_root.as_posix()}/", "")
+                        for name in files:
+                            src = root_path / name
+                            arcname = src.relative_to(ROOT_DIR).as_posix()
+                            zf.write(src, arcname)
+                            file_count += 1
+                else:
+                    arcname = target.relative_to(ROOT_DIR).as_posix()
+                    zf.write(target, arcname)
+                    file_count += 1
+        logger.info(
+            "已打包备份: %s (目录 %d 个, 文件 %d 个)",
+            backup_path,
+            dir_count,
+            file_count,
+        )
+        return backup_path
+    except OSError as e:
+        logger.warning("创建备份包失败，跳过备份: %s", e)
+        try:
+            if backup_path.exists():
+                backup_path.unlink()
+        except OSError:
+            pass
+        return None
+
+
 # ---------------------------------------------------------------------------
 # 核心业务函数
 # ---------------------------------------------------------------------------
 
 
-def reset_project(yes: bool = False, force: bool = False, dry_run: bool = False) -> int:
+def reset_project(
+    yes: bool = False,
+    force: bool = False,
+    dry_run: bool = False,
+    *,
+    backup: bool = False,
+) -> int:
     """项目重置业务函数（FR-CLI-002）。
 
     作为纯函数设计——所有参数显式传入，不读取 sys.argv / 环境变量，
@@ -327,6 +404,7 @@ def reset_project(yes: bool = False, force: bool = False, dry_run: bool = False)
         yes:     是否真正执行删除（默认仅 dry-run）。对应 ``--yes``。
         force:   是否跳过交互式确认（仅当 ``yes=True`` 时有效）。对应 ``--force``。
         dry_run: 显式声明 dry-run；与 ``yes`` 互斥时优先。对应 ``--dry-run``。
+        backup:  是否在删除前将待删除目录打包备份。对应 ``--backup``。
 
     Returns:
         int: 退出码（FR-CLI-007）
@@ -391,6 +469,19 @@ def reset_project(yes: bool = False, force: bool = False, dry_run: bool = False)
             logger.warning("❌ 用户取消，未执行删除")
             return 0  # 用户取消 → 退出码 0
 
+    backup_path = None
+    if backup:
+        logger.info("")
+        logger.info("开始打包备份...".center(LINE_WIDTH, "="))
+        backup_path = _create_backup_archive(
+            logger,
+            [path for path, _, _ in targets],
+        )
+        if backup_path is None:
+            logger.error("启用了 --backup 但备份失败，已中止删除")
+            return 2
+        logger.info("备份完成: %s", backup_path)
+
     # ── 10. 执行删除（FR-CLI-005）─────────────────────────────────
     logger.info("")
     logger.info("开始删除...".center(LINE_WIDTH, "="))
@@ -448,6 +539,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="显式声明 dry-run（默认行为也是 dry-run，但显式更可读）",
     )
+    parser.add_argument(
+        "--backup",
+        action="store_true",
+        help="删除前把待清理的目录打包备份到 .odp-meta/backups/",
+    )
     return parser
 
 
@@ -472,6 +568,7 @@ def main(argv: list[str] | None = None) -> int:
         yes=args.yes,
         force=effective_force,
         dry_run=args.dry_run,
+        backup=args.backup,
     )
 
 
