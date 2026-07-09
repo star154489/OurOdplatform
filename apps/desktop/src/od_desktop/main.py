@@ -576,6 +576,72 @@ class InferPage(ttk.Frame):
         threading.Thread(target=_target, daemon=True).start()
 
 
+class SetupPage(ttk.Frame):
+    """配置生成 —— 一键生成训练/评估/推理所需的运行时配置文件。"""
+
+    _CONFIGS = [
+        ("train", "训练配置 (train.yaml)", "模型训练所需的参数模板"),
+        ("val", "评估配置 (val.yaml)", "模型评估所需的参数模板"),
+        ("infer", "推理配置 (infer.yaml)", "模型推理所需的参数模板"),
+    ]
+
+    def __init__(self, parent):
+        super().__init__(parent, padding=10)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(2, weight=1)
+
+        form = ttk.LabelFrame(self, text="一键生成运行时配置", padding=10)
+        form.grid(row=0, column=0, sticky="ew")
+
+        ttk.Label(form, text="以下配置文件首次使用前需生成, 之后可手动编辑参数。\n"
+                  "已存在的不会被覆盖, 如需重生成请先删除旧文件。",
+                  font=("", 9), foreground="gray").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+        self._check_vars = {}
+        for i, (name, label, hint) in enumerate(self._CONFIGS, 1):
+            var = tk.BooleanVar(value=True)
+            self._check_vars[name] = var
+            frame = ttk.Frame(form)
+            frame.grid(row=i, column=0, columnspan=2, sticky="w", pady=1)
+            ttk.Checkbutton(frame, text=label, variable=var).pack(side=tk.LEFT)
+            ttk.Label(frame, text=f"  — {hint}", foreground="gray").pack(side=tk.LEFT)
+
+        ttk.Button(form, text="▶ 生成选中配置", command=self._run).grid(
+            row=len(self._CONFIGS) + 1, column=0, sticky="w", pady=(10, 0))
+
+        self.console = ConsoleFrame(self)
+        self.console.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+
+    def _run(self) -> None:
+        selected = [n for n, v in self._check_vars.items() if v.get()]
+        if not selected:
+            messagebox.showinfo("提示", "请至少勾选一项配置")
+            return
+        # 逐个生成 (CLI 每次只接受一个参数)
+        cmd = [sys.executable, "-m", "od_platform.runtime_config.generator"] + selected
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+        def _target() -> None:
+            for name in selected:
+                self.console.write(f"\n生成: {name}.yaml ...")
+                try:
+                    proc = subprocess.run(
+                        [sys.executable, "-m", "od_platform.runtime_config.generator", name],
+                        capture_output=True, text=True, encoding="utf-8", errors="replace",
+                        env=env,
+                        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                    )
+                    self.console.write(proc.stdout.strip())
+                    if proc.returncode != 0:
+                        self.console.write(proc.stderr.strip())
+                except Exception as e:
+                    self.console.write(f"✗ 失败: {e}")
+            self.console.write("\n✓ 配置生成完毕")
+
+        threading.Thread(target=_target, daemon=True).start()
+
+
 # ── 主窗口 ─────────────────────────────────────────────────────
 
 
@@ -588,23 +654,40 @@ class ODPlatformApp(tk.Tk):
         self.geometry("900x680")
         self.minsize(800, 550)
 
+        # ── 字体: 检测系统可用 CJK 字体, 优先微软雅黑 ──
+        from tkinter import font as _tkfont
+        _cjk_fonts = ["Microsoft YaHei", "SimHei", "Microsoft JhengHei", "SimSun", "KaiTi", "TkDefaultFont"]
+        _available = set(_tkfont.families())
+        self._cjk_font = next((f for f in _cjk_fonts if f in _available), "TkDefaultFont")
+        self._cjk_mono = "Consolas" if "Consolas" in _available else self._cjk_font
+
         # 样式
         style = ttk.Style()
         available_themes = style.theme_names()
         if "clam" in available_themes:
             style.theme_use("clam")
+        style.configure(".", font=(self._cjk_font, 9))
+        style.configure("TLabel", font=(self._cjk_font, 9))
+        style.configure("TButton", font=(self._cjk_font, 9))
+        style.configure("TCheckbutton", font=(self._cjk_font, 9))
+        style.configure("TRadiobutton", font=(self._cjk_font, 9))
+        style.configure("TCombobox", font=(self._cjk_font, 9))
+        style.configure("TLabelframe.Label", font=(self._cjk_font, 10, "bold"))
 
         # 顶部标题
         header = ttk.Frame(self, padding=(10, 8))
         header.pack(fill=tk.X)
-        ttk.Label(header, text="ODPlatform 桌面端", font=("", 16, "bold")).pack(side=tk.LEFT)
-        ttk.Label(header, text="目标检测一站式开发", font=("", 10)).pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Label(header, text="ODPlatform 桌面端",
+                  font=(self._cjk_font, 16, "bold")).pack(side=tk.LEFT)
+        ttk.Label(header, text="目标检测一站式开发",
+                  font=(self._cjk_font, 10)).pack(side=tk.LEFT, padx=(10, 0))
 
         # 标签页
         notebook = ttk.Notebook(self, padding=2)
         notebook.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
 
         notebook.add(TransformPage(notebook), text=" 数据转换 ")
+        notebook.add(SetupPage(notebook), text=" 配置生成 ")
         notebook.add(ValidatePage(notebook), text=" 数据验证 ")
         notebook.add(TrainPage(notebook), text=" 模型训练 ")
         notebook.add(EvalPage(notebook), text=" 模型评估 ")
@@ -614,7 +697,8 @@ class ODPlatformApp(tk.Tk):
         footer = ttk.Frame(self, padding=(10, 2))
         footer.pack(fill=tk.X, side=tk.BOTTOM)
         self._status_var = tk.StringVar(value="就绪")
-        ttk.Label(footer, textvariable=self._status_var, font=("", 8)).pack(side=tk.LEFT)
+        ttk.Label(footer, textvariable=self._status_var,
+                  font=(self._cjk_font, 8)).pack(side=tk.LEFT)
 
         # 轮询日志队列
         self._poll_logs()
